@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ia-lab
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-ai
+  namespace: ia-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hello-ai
+  template:
+    metadata:
+      labels:
+        app: hello-ai
+    spec:
+      containers:
+      - name: echoserver
+        # Esta imagen soporta ARM64 de forma nativa
+        image: ealen/echo-server:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: PORT
+          value: "80"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-ai-svc
+  namespace: ia-lab
+spec:
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: hello-ai
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hello-ai-ingress
+  namespace: ia-lab
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /test
+        pathType: Prefix
+        backend:
+          service:
+            name: hello-ai-svc
+            port:
+              number: 80
