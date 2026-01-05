@@ -1,26 +1,25 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: ia-lab
+  name: ai-lab
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hello-ai
-  namespace: ia-lab
+  name: smoke-test
+  namespace: ai-lab
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: hello-ai
+      app: smoke-test
   template:
     metadata:
       labels:
-        app: hello-ai
+        app: smoke-test
     spec:
       containers:
       - name: echoserver
-        # Esta imagen soporta ARM64 de forma nativa
         image: ealen/echo-server:latest
         ports:
         - containerPort: 80
@@ -29,31 +28,42 @@ spec:
           value: "80"
 ---
 apiVersion: v1
+kind: v1
+apiVersion: v1
 kind: Service
 metadata:
-  name: hello-ai-svc
-  namespace: ia-lab
+  name: smoke-test-svc
+  namespace: ai-lab
 spec:
   ports:
   - port: 80
     targetPort: 80
   selector:
-    app: hello-ai
+    app: smoke-test
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: hello-ai-ingress
-  namespace: ia-lab
+  name: smoke-test-ingress
+  namespace: ai-lab
+  annotations:
+    # Instrucciones para el cert-manager y forzar HTTPS
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
-  ingressClassName: nginx
+  ingressClassName: nginx  # <--- Crucial: al mismo nivel que 'tls'
+  tls:
+  - hosts:
+    - test.zyklab.me
+    secretName: smoke-test-tls
   rules:
-  - http:
+  - host: test.zyklab.me
+    http:
       paths:
-      - path: /test
+      - path: /
         pathType: Prefix
         backend:
           service:
-            name: hello-ai-svc
+            name: smoke-test-svc
             port:
               number: 80
