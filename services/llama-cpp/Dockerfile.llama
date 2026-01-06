@@ -1,19 +1,10 @@
 # Stage 1: Build
 FROM ubuntu:24.04 AS build
-
-# Instalar dependencias de compilación + CURL dev
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    git \
-    libcurl4-openssl-dev \
+    build-essential cmake git libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Clonar llama.cpp
 WORKDIR /app
 RUN git clone https://github.com/ggerganov/llama.cpp.git .
-
-# Compilar para ARM64
 RUN mkdir build && cd build && \
     cmake .. -DGGML_NATIVE=ON -DGGML_OPENMP=ON -DLLAMA_CURL=ON && \
     cmake --build . --config Release --target llama-server
@@ -21,16 +12,14 @@ RUN mkdir build && cd build && \
 # Stage 2: Runtime
 FROM ubuntu:24.04
 
-# Instalar libcurl en el runtime (necesaria para ejecutar el binario)
 RUN apt-get update && apt-get install -y \
     libcurl4 \
+    libgomp1 \
+    libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# Copiar solo el binario necesario
 COPY --from=build /app/build/bin/llama-server /app/llama-server
 
 EXPOSE 8080
-
 ENTRYPOINT ["/app/llama-server"]
