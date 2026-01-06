@@ -1,0 +1,33 @@
+# Stage 1: Build
+FROM ubuntu:24.04 AS build
+
+# Instalar dependencias de compilación
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clonar llama.cpp
+WORKDIR /app
+RUN git clone https://github.com/ggerganov/llama.cpp.git .
+
+# Compilar para ARM64 (Ampere soporta instrucciones DotProd y NEON)
+# GGML_NO_ACCELERATE se usa porque no tenemos GPU, pero activamos optimizaciones de CPU
+RUN mkdir build && cd build && \
+    cmake .. -DGGML_NATIVE=ON -DGGML_OPENMP=ON && \
+    cmake --build . --config Release --target llama-server
+
+# Stage 2: Runtime
+FROM ubuntu:24.04
+
+WORKDIR /app
+
+# Copiar solo el binario necesario desde el Stage 1
+COPY --from=build /app/build/bin/llama-server /app/llama-server
+
+# Exponer el puerto por defecto del server de llama.cpp
+EXPOSE 8080
+
+# El entrypoint recibirá los parámetros desde el deployment de K8s
+ENTRYPOINT ["/app/llama-server"]
