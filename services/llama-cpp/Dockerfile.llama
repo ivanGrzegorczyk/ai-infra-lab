@@ -12,14 +12,19 @@ RUN mkdir build && cd build && \
 # Stage 2: Runtime
 FROM ubuntu:24.04
 
+# Instalamos lo básico
 RUN apt-get update && apt-get install -y \
-    libcurl4 \
-    libgomp1 \
-    libstdc++6 \
+    libcurl4 libgomp1 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# COPIAMOS EL BINARIO
 COPY --from=build /app/build/bin/llama-server /app/llama-server
+
+COPY --from=build /usr/lib/aarch64-linux-gnu/libmtmd* /usr/lib/aarch64-linux-gnu/
+# Actualizamos el cache de librerías del sistema para que las encuentre
+RUN ldconfig
 
 EXPOSE 8080
 ENTRYPOINT ["/app/llama-server"]
