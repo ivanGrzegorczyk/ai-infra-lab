@@ -1,13 +1,16 @@
-# Stage 1: Build (Igual)
+# Stage 1: Build
 FROM ubuntu:24.04 AS build
 RUN apt-get update && apt-get install -y \
     build-essential cmake git libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 RUN git clone https://github.com/ggerganov/llama.cpp.git .
+
+# Compilamos y usamos el comando 'install' para agrupar todo
 RUN mkdir build && cd build && \
     cmake .. -DGGML_NATIVE=ON -DGGML_OPENMP=ON -DLLAMA_CURL=ON && \
-    cmake --build . --config Release --target llama-server
+    cmake --build . --config Release --target llama-server && \
+    cmake --install . --prefix /app/install
 
 # Stage 2: Runtime
 FROM ubuntu:24.04
@@ -17,10 +20,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY --from=build /app/build/bin/ /app/
+# Copiamos todo lo que CMake instaló (binarios y librerías)
+COPY --from=build /app/install/ /usr/local/
 
-ENV LD_LIBRARY_PATH=/app
+# Actualizamos el caché de librerías del sistema
+RUN ldconfig
 
 EXPOSE 8080
-ENTRYPOINT ["/app/llama-server"]
 
+ENTRYPOINT ["llama-server"]
