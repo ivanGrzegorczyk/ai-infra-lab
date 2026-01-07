@@ -18,7 +18,18 @@ func NewChatHandler(service ports.ChatService) *ChatHandler {
 }
 
 func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
-	// Validar método
+	// Configurar Headers de CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	// Manejar el Preflight (Request tipo OPTIONS)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Validar método para la lógica real
 	if r.Method != http.MethodPost {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
