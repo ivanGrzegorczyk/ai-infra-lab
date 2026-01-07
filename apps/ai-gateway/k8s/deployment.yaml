@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: ai-gateway
-        image: ivanzyk/ai-infra-gateway:latest
+        image: ivangrz/ai-infra-gateway:latest
         ports:
         - containerPort: 8080
         env:
