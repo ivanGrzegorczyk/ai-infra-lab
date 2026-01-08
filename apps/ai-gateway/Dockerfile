@@ -3,13 +3,12 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
-# Copia solo los archivos de dependencias primero para cachear capas
-COPY go.mod ./
-# Si en algún momento tiene go.sum, descomentar la próxima línea
-# COPY go.sum ./
+COPY apps/ai-gateway/go.mod ./
+COPY apps/ai-gateway/go.sum ./
+
 RUN go mod download
 
-COPY . .
+COPY apps/ai-gateway/ .
 
 # Compila el binario estático (CGO_ENABLED=0 para que corra en cualquier linux)
 RUN CGO_ENABLED=0 GOOS=linux go build -o gateway ./cmd/gateway/main.go
