@@ -28,6 +28,18 @@ spec:
       labels:
         app: ollama
     spec:
+      initContainers:
+      - name: pull-model
+        image: ollama/ollama:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            ollama serve & 
+            sleep 5; 
+            ollama pull llama3.1:8b;
+        volumeMounts:
+        - name: ollama-storage
+          mountPath: /root/.ollama
       containers:
       - name: ollama
         image: ollama/ollama:latest
