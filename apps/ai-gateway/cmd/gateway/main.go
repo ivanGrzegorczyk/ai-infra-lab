@@ -7,8 +7,9 @@ import (
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapters/clients"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapters/config"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapters/handlers"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/services"
-	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapters/handlers" // Lo crearemos ahora
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -26,6 +27,7 @@ func main() {
 
 	// Configurar Rutas
 	http.HandleFunc("/v1/chat", chatHandler.Handle)
+	http.Handle("/metrics", promhttp.Handler())
 
 	// Arrancar el Servidor
 	fmt.Printf("AI Gateway corriendo en el puerto %s...\n", cfg.Port)
