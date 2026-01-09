@@ -48,6 +48,10 @@ spec:
         env:
         - name: OLLAMA_HOST
           value: "0.0.0.0"
+        - name: OLLAMA_NUM_PARALLEL # Permite procesar N pedidos a la vez
+          value: "4" 
+        - name: OLLAMA_MAX_LOADED_MODELS # Permite tener más de un modelo en memoria
+          value: "2"
         resources:
           requests:
             cpu: "3"
