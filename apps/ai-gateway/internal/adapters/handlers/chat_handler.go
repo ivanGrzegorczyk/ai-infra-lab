@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -36,7 +37,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Validar método
 	if r.Method != http.MethodPost {
-		metrics.HttpRequestsTotal.WithLabelValues("405", "unknown").Inc()
+		metrics.HttpRequestsTotal.WithLabelValues("405", "unknown", "gateway").Inc()
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
 	}
@@ -44,7 +45,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Decodificar el request
 	var chatReq domain.ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
-		metrics.HttpRequestsTotal.WithLabelValues("400", "unknown").Inc()
+		metrics.HttpRequestsTotal.WithLabelValues("400", "unknown", "gateway").Inc()
 		http.Error(w, "Request inválido", http.StatusBadRequest)
 		return
 	}
@@ -67,6 +68,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Variable para persistir el proveedor y usarlo cuando el canal se cierre
 	provider := "unknown"
+	log.Printf("[DEBUG] Iniciando stream para modelo: %s", chatReq.Model)
 
 	for {
 		select {
@@ -75,6 +77,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		case err := <-errChan:
 			if err != nil {
+				log.Println("[DEBUG] Conexión cerrada por el cliente")
 				// Si hubo error, usa el último proveedor detectado o "unknown"
 				metrics.HttpRequestsTotal.WithLabelValues("500", chatReq.Model, provider).Inc()
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
@@ -82,6 +85,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			}
 		case res, ok := <-resChan:
 			if !ok {
+				log.Printf("[DEBUG] Stream finalizado exitosamente. Proveedor final: %s", provider)
 				// El canal se cerró con éxito, registra el 200 con el proveedor que atendió la petición
 				metrics.HttpRequestsTotal.WithLabelValues("200", chatReq.Model, provider).Inc()
 
@@ -101,11 +105,20 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 				isFirstToken = false
 			}
 
+			// Asegura que siempre haya un proveedor válido
+			if res.Provider != "" {
+				if provider == "unknown" {
+					log.Printf("[DEBUG] Proveedor detectado: %s", res.Provider)
+				}
+				provider = res.Provider
+			} else {
+				log.Println("[WARN] Recibido token con Provider VACÍO")
+			}
+
 			// Incrementa el contador total de tokens
 			metrics.TokensTotal.WithLabelValues(chatReq.Model, provider).Inc()
 
 			// Envia el token en formato SSE
-			// Formato: data: {"id": "...", "content": "..."} \n\n
 			jsonData, _ := json.Marshal(res)
 			fmt.Fprintf(w, "data: %s\n\n", jsonData)
 
