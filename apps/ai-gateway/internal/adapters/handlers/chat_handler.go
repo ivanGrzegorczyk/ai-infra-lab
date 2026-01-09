@@ -65,7 +65,9 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Loop de streaming
+	// Variable para persistir el proveedor y usarlo cuando el canal se cierre
+	provider := "unknown"
+
 	for {
 		select {
 		case <-r.Context().Done():
@@ -73,28 +75,34 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		case err := <-errChan:
 			if err != nil {
-				metrics.HttpRequestsTotal.WithLabelValues("500", chatReq.Model, "unknown").Inc()
+				// Si hubo error, usa el último proveedor detectado o "unknown"
+				metrics.HttpRequestsTotal.WithLabelValues("500", chatReq.Model, provider).Inc()
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 				return
 			}
 		case res, ok := <-resChan:
 			if !ok {
-				metrics.HttpRequestsTotal.WithLabelValues("200", chatReq.Model, res.Provider).Inc()
-				// El canal se cerró, termina el stream con un mensaje de fin
+				// El canal se cerró con éxito, registra el 200 con el proveedor que atendió la petición
+				metrics.HttpRequestsTotal.WithLabelValues("200", chatReq.Model, provider).Inc()
+
+				// Termina el stream con un mensaje de fin
 				fmt.Fprintf(w, "data: [DONE]\n\n")
 				flusher.Flush()
 				return
 			}
 
+			// Actualiza el proveedor con los datos reales de la respuesta
+			provider = res.Provider
+
 			// Si es el primer token, calcula el TTFT
 			if isFirstToken {
 				duration := time.Since(startTime).Seconds()
-				metrics.TimeToFirstToken.WithLabelValues(chatReq.Model, res.Provider).Observe(duration)
+				metrics.TimeToFirstToken.WithLabelValues(chatReq.Model, provider).Observe(duration)
 				isFirstToken = false
 			}
 
 			// Incrementa el contador total de tokens
-			metrics.TokensTotal.WithLabelValues(chatReq.Model, res.Provider).Inc()
+			metrics.TokensTotal.WithLabelValues(chatReq.Model, provider).Inc()
 
 			// Envia el token en formato SSE
 			// Formato: data: {"id": "...", "content": "..."} \n\n
