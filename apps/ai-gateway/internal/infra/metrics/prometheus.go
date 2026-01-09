@@ -23,7 +23,7 @@ var (
 	HttpRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "ai_gateway_http_requests_total",
 		Help: "Total de peticiones HTTP",
-	}, []string{"status", "model"})
+	}, []string{"status", "model", "provider"})
 	// Gauge para tokens restantes de Groq
 	GroqRemainingTokens = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "ai_gateway_groq_remaining_tokens",

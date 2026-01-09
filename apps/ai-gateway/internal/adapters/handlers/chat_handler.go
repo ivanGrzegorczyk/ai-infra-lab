@@ -73,13 +73,13 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		case err := <-errChan:
 			if err != nil {
-				metrics.HttpRequestsTotal.WithLabelValues("500", chatReq.Model).Inc()
+				metrics.HttpRequestsTotal.WithLabelValues("500", chatReq.Model, "unknown").Inc()
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 				return
 			}
 		case res, ok := <-resChan:
 			if !ok {
-				metrics.HttpRequestsTotal.WithLabelValues("200", chatReq.Model).Inc()
+				metrics.HttpRequestsTotal.WithLabelValues("200", chatReq.Model, res.Provider).Inc()
 				// El canal se cerró, termina el stream con un mensaje de fin
 				fmt.Fprintf(w, "data: [DONE]\n\n")
 				flusher.Flush()
