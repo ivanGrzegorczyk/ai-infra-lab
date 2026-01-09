@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: ai-gateway
-        image: ivangrz/ai-infra-gateway:latest
+        image: ivangrz/ai-infra-gateway:1.0.2
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
