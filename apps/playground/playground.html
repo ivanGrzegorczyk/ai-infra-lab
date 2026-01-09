@@ -5,13 +5,14 @@
     <title>AI Infra Gateway - Playground</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #ddd; max-width: 800px; margin: 40px auto; padding: 20px; }
-        #chat { background: #2d2d2d; border-radius: 8px; padding: 20px; min-height: 300px; margin-bottom: 20px; white-space: pre-wrap; line-height: 1.5; border: 1px solid #444; }
+        #chat { background: #2d2d2d; border-radius: 8px; padding: 20px; min-height: 300px; margin-bottom: 20px; white-space: pre-wrap; line-height: 1.5; border: 1px solid #444; overflow-y: auto; max-height: 500px; }
         .controls { display: flex; gap: 10px; }
         input { flex-grow: 1; padding: 12px; border-radius: 4px; border: 1px solid #444; background: #3d3d3d; color: white; }
         button { padding: 10px 20px; border-radius: 4px; border: none; background: #007acc; color: white; cursor: pointer; font-weight: bold; }
         button:disabled { background: #555; }
-        .token { animation: fadeIn 0.2s; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .provider-badge { font-size: 0.8em; color: #00ff00; margin-bottom: 8px; font-weight: bold; display: block; }
+        .message-content { color: #eee; }
+        .error { color: #ff5555; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -31,9 +32,13 @@
             const prompt = promptInput.value;
             if (!prompt) return;
 
-            // Reset UI
-            chatDiv.innerText = '';
+            // Limpiar chat y deshabilitar botón
+            chatDiv.innerHTML = ''; 
             sendBtn.disabled = true;
+
+            // Variables de referencia para este mensaje específico
+            let contentElement = null;
+            let providerDetected = false;
 
             try {
                 const response = await fetch('https://chat.zyklab.me/v1/chat', {
@@ -46,6 +51,8 @@
                     })
                 });
 
+                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
 
@@ -57,31 +64,54 @@
                     const lines = chunk.split('\n');
 
                     for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const data = line.slice(6);
-                            if (data === '[DONE]') continue;
+                        if (!line.startsWith('data: ')) continue;
+                        
+                        const data = line.slice(6).trim();
+                        if (data === '[DONE]') continue;
+
+                        try {
+                            const json = JSON.parse(data);
+
+                            // Si es el primer token, creamos la estructura del mensaje
+                            if (!providerDetected) {
+                                // Crear Badge del proveedor
+                                const badge = document.createElement('span');
+                                badge.className = 'provider-badge';
+                                badge.innerText = `Respondido por: ${json.provider.toUpperCase()}`;
+                                chatDiv.appendChild(badge);
+
+                                // Crear contenedor de texto y guardar la referencia
+                                contentElement = document.createElement('span');
+                                contentElement.className = 'message-content';
+                                chatDiv.appendChild(contentElement);
+                                
+                                providerDetected = true;
+                            }
+
+                            // Actualizar el contenido usando la referencia de memoria directa
+                            if (contentElement && json.content) {
+                                contentElement.innerText += json.content;
+                            }
                             
-                            try {
-                                const json = JSON.parse(data);
-                                // Agrega un indicador del proveedor si no existe
-                                if (!document.getElementById('provider-tag')) {
-                                    const tag = document.createElement('div');
-                                    tag.id = 'provider-tag';
-                                    tag.style = "font-size: 0.8em; color: #888; margin-bottom: 10px;";
-                                    tag.innerText = `Respondido por: ${json.provider.toUpperCase()}`;
-                                    chatDiv.prepend(tag);
-                                }
-                                chatDiv.innerText += json.content;
-                                window.scrollTo(0, document.body.scrollHeight);
-                            } catch (e) { /* Buffer incompleto */ }
+                            window.scrollTo(0, document.body.scrollHeight);
+                        } catch (e) {
+                            // Ignorar errores de JSON incompleto en el stream
                         }
                     }
                 }
             } catch (err) {
-                chatDiv.innerText = "Error: " + err.message;
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.innerText = "Error: " + err.message;
+                chatDiv.appendChild(errorDiv);
             } finally {
                 sendBtn.disabled = false;
             }
+        });
+
+        // Permitir enviar con Enter
+        promptInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendBtn.click();
         });
     </script>
 </body>
