@@ -25,12 +25,12 @@ var (
 		Help: "Total de peticiones HTTP",
 	}, []string{"status", "model"})
 	// Gauge para tokens restantes de Groq
-	GroqRemainingTokens = prometheus.NewGauge(prometheus.GaugeOpts{
+	GroqRemainingTokens = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "ai_gateway_groq_remaining_tokens",
 		Help: "Tokens restantes en la ventana actual de Groq",
 	})
 	// Gauge para requests restantes de Groq
-	GroqRemainingRequests = prometheus.NewGauge(prometheus.GaugeOpts{
+	GroqRemainingRequests = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "ai_gateway_groq_remaining_requests",
 		Help: "Requests restantes en el día para Groq",
 	})
