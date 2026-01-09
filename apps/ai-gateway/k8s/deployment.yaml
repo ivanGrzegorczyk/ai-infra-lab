@@ -36,11 +36,13 @@ kind: Service
 metadata:
   name: ai-gateway-service
   namespace: ai-lab
+  labels:
+    app: ai-gateway
 spec:
   selector:
     app: ai-gateway
   ports:
-    - protocol: TCP
+    - name: http-metrics
+      protocol: TCP
       port: 80
       targetPort: 8080
-  type: ClusterIP
