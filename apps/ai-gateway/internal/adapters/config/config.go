@@ -5,14 +5,16 @@ import (
 )
 
 type Config struct {
-	OllamaURL string
-	Port      string
+	OllamaURL  string
+	GroqAPIKey string
+	Port       string
 }
 
 func Load() *Config {
 	return &Config{
-		OllamaURL: getEnv("OLLAMA_URL", "http://localhost:11434"),
-		Port:      getEnv("PORT", "8080"),
+		OllamaURL:  getEnv("OLLAMA_URL", "http://localhost:11434"),
+		GroqAPIKey: getEnv("GROQ_API_KEY", ""),
+		Port:       getEnv("PORT", "8080"),
 	}
 }
 

@@ -18,9 +18,10 @@ func main() {
 
 	// Instanciar Adaptadores de Salida
 	ollamaClient := clients.NewOllamaClient(cfg.OllamaURL)
+	groqClient := clients.NewGroqClient(cfg.GroqAPIKey)
 
 	// Instanciar Lógica de Negocio e inyectar el cliente
-	chatService := services.NewChatService(ollamaClient)
+	chatService := services.NewChatService(ollamaClient, groqClient)
 
 	// Instanciar Adaptadores de Entrada e inyectar el servicio
 	chatHandler := handlers.NewChatHandler(chatService)

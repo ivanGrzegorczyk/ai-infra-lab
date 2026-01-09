@@ -63,6 +63,14 @@
                             
                             try {
                                 const json = JSON.parse(data);
+                                // Agrega un indicador del proveedor si no existe
+                                if (!document.getElementById('provider-tag')) {
+                                    const tag = document.createElement('div');
+                                    tag.id = 'provider-tag';
+                                    tag.style = "font-size: 0.8em; color: #888; margin-bottom: 10px;";
+                                    tag.innerText = `Respondido por: ${json.provider.toUpperCase()}`;
+                                    chatDiv.prepend(tag);
+                                }
                                 chatDiv.innerText += json.content;
                                 window.scrollTo(0, document.body.scrollHeight);
                             } catch (e) { /* Buffer incompleto */ }

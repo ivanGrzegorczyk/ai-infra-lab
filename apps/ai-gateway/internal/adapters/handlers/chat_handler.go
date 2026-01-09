@@ -89,12 +89,12 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			// Si es el primer token, calcula el TTFT
 			if isFirstToken {
 				duration := time.Since(startTime).Seconds()
-				metrics.TimeToFirstToken.WithLabelValues(chatReq.Model, "ollama").Observe(duration)
+				metrics.TimeToFirstToken.WithLabelValues(chatReq.Model, res.Provider).Observe(duration)
 				isFirstToken = false
 			}
 
 			// Incrementa el contador total de tokens
-			metrics.TokensTotal.WithLabelValues(chatReq.Model, "ollama").Inc()
+			metrics.TokensTotal.WithLabelValues(chatReq.Model, res.Provider).Inc()
 
 			// Envia el token en formato SSE
 			// Formato: data: {"id": "...", "content": "..."} \n\n

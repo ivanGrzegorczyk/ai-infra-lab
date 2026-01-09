@@ -23,6 +23,11 @@ spec:
           value: "8080"
         - name: OLLAMA_URL
           value: "http://ollama-service.ai-lab.svc.cluster.local:11434"
+        - name: GROQ_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-gateway-secrets
+              key: GROQ_API_KEY
         resources:
           limits:
             memory: "128Mi"
