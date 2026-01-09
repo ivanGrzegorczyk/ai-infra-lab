@@ -53,11 +53,11 @@ func (c *groqClient) GenerateStream(ctx context.Context, req domain.ChatRequest)
 			remTokens := resp.Header.Get("x-ratelimit-remaining-tokens")
 			remReqs := resp.Header.Get("x-ratelimit-remaining-requests")
 
-			if tokens, err := strconv.ParseFloat(remTokens, 64); err == nil {
-				metrics.GroqRemainingTokens.Set(tokens)
+			if t, parseErr := strconv.ParseFloat(remTokens, 64); parseErr == nil {
+				metrics.GroqRemainingTokens.Set(t)
 			}
-			if reqs, err := strconv.ParseFloat(remReqs, 64); err == nil {
-				metrics.GroqRemainingRequests.Set(reqs)
+			if r, parseErr := strconv.ParseFloat(remReqs, 64); parseErr == nil {
+				metrics.GroqRemainingRequests.Set(r)
 			}
 		}
 
