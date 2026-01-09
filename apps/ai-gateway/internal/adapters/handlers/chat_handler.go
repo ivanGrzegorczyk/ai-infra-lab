@@ -23,6 +23,8 @@ func NewChatHandler(service ports.ChatService) *ChatHandler {
 func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	isFirstToken := true
+	provider := "unknown"
+	tokenCount := 0
 
 	// Configurar Headers de CORS
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -66,9 +68,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Variable para persistir el proveedor y usarlo cuando el canal se cierre
-	provider := "unknown"
-	log.Printf("[DEBUG] Iniciando stream para modelo: %s", chatReq.Model)
+	log.Printf("Iniciando stream para modelo: %s", chatReq.Model)
 
 	for {
 		select {
@@ -77,7 +77,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		case err := <-errChan:
 			if err != nil {
-				log.Println("[DEBUG] Conexión cerrada por el cliente")
+				log.Println("[Error] Conexión cerrada por el cliente o error en el stream:", err)
 				// Si hubo error, usa el último proveedor detectado o "unknown"
 				metrics.HttpRequestsTotal.WithLabelValues("500", chatReq.Model, provider).Inc()
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
@@ -85,7 +85,10 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			}
 		case res, ok := <-resChan:
 			if !ok {
-				log.Printf("[DEBUG] Stream finalizado exitosamente. Proveedor final: %s", provider)
+				log.Printf("Stream finalizado exitosamente. Proveedor final: %s", provider)
+
+				// Registra el total de tokens de este mensaje
+				metrics.TokensPerRequest.WithLabelValues(chatReq.Model, provider).Observe(float64(tokenCount))
 				// El canal se cerró con éxito, registra el 200 con el proveedor que atendió la petición
 				metrics.HttpRequestsTotal.WithLabelValues("200", chatReq.Model, provider).Inc()
 
@@ -107,13 +110,12 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 			// Asegura que siempre haya un proveedor válido
 			if res.Provider != "" {
-				if provider == "unknown" {
-					log.Printf("[DEBUG] Proveedor detectado: %s", res.Provider)
-				}
 				provider = res.Provider
 			} else {
 				log.Println("[WARN] Recibido token con Provider VACÍO")
 			}
+
+			tokenCount++
 
 			// Incrementa el contador total de tokens
 			metrics.TokensTotal.WithLabelValues(chatReq.Model, provider).Inc()

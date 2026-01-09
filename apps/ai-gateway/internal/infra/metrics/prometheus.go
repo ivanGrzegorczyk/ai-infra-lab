@@ -34,4 +34,10 @@ var (
 		Name: "ai_gateway_groq_remaining_requests",
 		Help: "Requests restantes en el día para Groq",
 	})
+	// Histograma de Tokens por Request
+	TokensPerRequest = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ai_gateway_tokens_per_request",
+		Help:    "Distribución de tokens generados por cada petición",
+		Buckets: []float64{10, 50, 100, 250, 500, 1000},
+	}, []string{"model", "provider"})
 )
