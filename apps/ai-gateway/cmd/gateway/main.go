@@ -38,8 +38,16 @@ func main() {
 	mux.Handle("/metrics", promhttp.Handler())
 
 	// Ruta de Chat (Protegida por Middleware)
-	chatWithAuth := httpHandler.AuthMiddleware(keyRepo)(http.HandlerFunc(chatHandler.Handle))
-	mux.Handle("/v1/chat", chatWithAuth)
+	baseHandler := http.HandlerFunc(chatHandler.Handle)
+
+	// Se envuelve con Auth
+	authWrapped := httpHandler.AuthMiddleware(keyRepo)(baseHandler)
+
+	// Se envuelve con CORS (que debe ser lo primero que vea la petición)
+	finalHandler := httpHandler.CORSMiddleware(authWrapped)
+
+	// Registra en el mux
+	mux.Handle("/v1/chat", finalHandler)
 
 	// --- Servidor ---
 	serverAddr := ":" + cfg.Port

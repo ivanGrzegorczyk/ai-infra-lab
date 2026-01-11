@@ -26,17 +26,6 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	provider := "unknown"
 	tokenCount := 0
 
-	// Configurar Headers de CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	// Manejar el Preflight (Request tipo OPTIONS)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	// Validar método
 	if r.Method != http.MethodPost {
 		observability.HttpRequestsTotal.WithLabelValues("405", "unknown", "gateway").Inc()
