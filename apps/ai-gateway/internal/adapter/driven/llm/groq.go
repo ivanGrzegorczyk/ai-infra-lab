@@ -1,4 +1,4 @@
-package clients
+package llm
 
 import (
 	"bufio"
@@ -12,7 +12,7 @@ import (
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
-	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/infra/metrics"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/observability"
 )
 
 type groqClient struct {
@@ -54,10 +54,10 @@ func (c *groqClient) GenerateStream(ctx context.Context, req domain.ChatRequest)
 			remReqs := resp.Header.Get("x-ratelimit-remaining-requests")
 
 			if t, parseErr := strconv.ParseFloat(remTokens, 64); parseErr == nil {
-				metrics.GroqRemainingTokens.Set(t)
+				observability.GroqRemainingTokens.Set(t)
 			}
 			if r, parseErr := strconv.ParseFloat(remReqs, 64); parseErr == nil {
-				metrics.GroqRemainingRequests.Set(r)
+				observability.GroqRemainingRequests.Set(r)
 			}
 		}
 

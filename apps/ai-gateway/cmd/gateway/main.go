@@ -5,34 +5,46 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapters/clients"
-	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapters/config"
-	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapters/handlers"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driven/llm"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driven/storage"
+	httpHandler "github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driving/http"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/config"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/services"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
-	// Cargar Configuración
 	cfg := config.Load()
 
-	// Instanciar Adaptadores de Salida
-	ollamaClient := clients.NewOllamaClient(cfg.OllamaURL)
-	groqClient := clients.NewGroqClient(cfg.GroqAPIKey)
+	// --- Adaptadores de Salida ---
+	ollamaClient := llm.NewOllamaClient(cfg.OllamaURL)
+	groqClient := llm.NewGroqClient(cfg.GroqAPIKey)
 
-	// Instanciar Lógica de Negocio e inyectar el cliente
+	// Repositorio de API Keys
+	keyRepo, err := storage.NewJSONKeyRepository("configs/keys.json")
+	if err != nil {
+		log.Fatalf("No se pudo cargar el repositorio de keys: %v", err)
+	}
+
 	chatService := services.NewChatService(ollamaClient, groqClient)
 
-	// Instanciar Adaptadores de Entrada e inyectar el servicio
-	chatHandler := handlers.NewChatHandler(chatService)
+	// --- Adaptadores de Entrada ---
+	chatHandler := httpHandler.NewChatHandler(chatService)
 
-	// Configurar Rutas
-	http.HandleFunc("/v1/chat", chatHandler.Handle)
-	http.Handle("/metrics", promhttp.Handler())
+	// Multiplexer (Router) local
+	mux := http.NewServeMux()
 
-	// Arrancar el Servidor
-	fmt.Printf("AI Gateway corriendo en el puerto %s...\n", cfg.Port)
-	fmt.Printf("Conectado a Ollama en: %s\n", cfg.OllamaURL)
-	
-	log.Fatal(http.ListenAndServe(":"+cfg.Port, nil))
+	// Ruta de métricas (Pública)
+	mux.Handle("/metrics", promhttp.Handler())
+
+	// Ruta de Chat (Protegida por Middleware)
+	chatWithAuth := httpHandler.AuthMiddleware(keyRepo)(http.HandlerFunc(chatHandler.Handle))
+	mux.Handle("/v1/chat", chatWithAuth)
+
+	// --- Servidor ---
+	serverAddr := ":" + cfg.Port
+	fmt.Printf("AI Gateway corriendo en %s\n", serverAddr)
+	fmt.Printf("Providers listos: Ollama (%s) y Groq\n", cfg.OllamaURL)
+
+	log.Fatal(http.ListenAndServe(serverAddr, mux))
 }

@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 )
 

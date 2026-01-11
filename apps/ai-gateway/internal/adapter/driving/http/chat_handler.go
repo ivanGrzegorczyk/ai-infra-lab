@@ -1,4 +1,4 @@
-package handlers
+package http
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
-	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/infra/metrics"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/observability"
 )
 
 type ChatHandler struct {
@@ -39,7 +39,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Validar método
 	if r.Method != http.MethodPost {
-		metrics.HttpRequestsTotal.WithLabelValues("405", "unknown", "gateway").Inc()
+		observability.HttpRequestsTotal.WithLabelValues("405", "unknown", "gateway").Inc()
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
 	}
@@ -47,7 +47,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Decodificar el request
 	var chatReq domain.ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
-		metrics.HttpRequestsTotal.WithLabelValues("400", "unknown", "gateway").Inc()
+		observability.HttpRequestsTotal.WithLabelValues("400", "unknown", "gateway").Inc()
 		http.Error(w, "Request inválido", http.StatusBadRequest)
 		return
 	}
@@ -79,7 +79,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				log.Println("[Error] Conexión cerrada por el cliente o error en el stream:", err)
 				// Si hubo error, usa el último proveedor detectado o "unknown"
-				metrics.HttpRequestsTotal.WithLabelValues("500", chatReq.Model, provider).Inc()
+				observability.HttpRequestsTotal.WithLabelValues("500", chatReq.Model, provider).Inc()
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 				return
 			}
@@ -88,9 +88,9 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Stream finalizado exitosamente. Proveedor final: %s", provider)
 
 				// Registra el total de tokens de este mensaje
-				metrics.TokensPerRequest.WithLabelValues(chatReq.Model, provider).Observe(float64(tokenCount))
+				observability.TokensPerRequest.WithLabelValues(chatReq.Model, provider).Observe(float64(tokenCount))
 				// El canal se cerró con éxito, registra el 200 con el proveedor que atendió la petición
-				metrics.HttpRequestsTotal.WithLabelValues("200", chatReq.Model, provider).Inc()
+				observability.HttpRequestsTotal.WithLabelValues("200", chatReq.Model, provider).Inc()
 
 				// Termina el stream con un mensaje de fin
 				fmt.Fprintf(w, "data: [DONE]\n\n")
@@ -104,7 +104,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			// Si es el primer token, calcula el TTFT
 			if isFirstToken {
 				duration := time.Since(startTime).Seconds()
-				metrics.TimeToFirstToken.WithLabelValues(chatReq.Model, provider).Observe(duration)
+				observability.TimeToFirstToken.WithLabelValues(chatReq.Model, provider).Observe(duration)
 				isFirstToken = false
 			}
 
@@ -118,7 +118,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			tokenCount++
 
 			// Incrementa el contador total de tokens
-			metrics.TokensTotal.WithLabelValues(chatReq.Model, provider).Inc()
+			observability.TokensTotal.WithLabelValues(chatReq.Model, provider).Inc()
 
 			// Envia el token en formato SSE
 			jsonData, _ := json.Marshal(res)

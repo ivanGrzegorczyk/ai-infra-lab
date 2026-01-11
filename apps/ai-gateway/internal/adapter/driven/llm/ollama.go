@@ -1,4 +1,4 @@
-package clients
+package llm
 
 import (
 	"bufio"
@@ -39,7 +39,7 @@ func (c *ollamaClient) GenerateStream(ctx context.Context, req domain.ChatReques
 
 		// 1. Traducir al formato de Ollama (su API espera /api/chat)
 		url := fmt.Sprintf("%s/api/chat", c.baseURL)
-		
+
 		// Ollama usa "messages" pero su estructura es levemente distinta en algunos campos
 		// Por ahora mapea lo básico
 		body, _ := json.Marshal(map[string]interface{}{
