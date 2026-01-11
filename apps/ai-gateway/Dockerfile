@@ -19,7 +19,8 @@ FROM alpine:latest
 # Instala certificados para estar preparado cuando llame a Groq o APIs externas (HTTPS)
 RUN apk --no-cache add ca-certificates
 
-WORKDIR /root/
+# Cambiamos a /app para que el binario encuentre las keys en la ruta relativa "configs/keys.json"
+WORKDIR /app
 
 # Copia el binario desde la etapa anterior
 COPY --from=builder /app/gateway .
