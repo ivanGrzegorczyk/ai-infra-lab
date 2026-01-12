@@ -2,49 +2,71 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>AI Infra Gateway - Playground v3</title>
+    <title>AI Infra Gateway - Playground v3.1</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #ddd; max-width: 800px; margin: 40px auto; padding: 20px; }
-        #chat { background: #2d2d2d; border-radius: 8px; padding: 20px; min-height: 300px; margin-bottom: 20px; white-space: pre-wrap; line-height: 1.5; border: 1px solid #444; overflow-y: auto; max-height: 500px; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #ddd; max-width: 900px; margin: 40px auto; padding: 20px; }
         
-        .config-panel { background: #252526; border: 1px solid #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; align-items: flex-end; }
+        /* Chat Container */
+        #chat { 
+            background: #2d2d2d; 
+            border-radius: 8px; 
+            padding: 20px; 
+            min-height: 400px; 
+            margin-bottom: 20px; 
+            white-space: pre-wrap; 
+            line-height: 1.6; 
+            border: 1px solid #444; 
+            overflow-y: auto; 
+            max-height: 600px;
+            scroll-behavior: smooth;
+        }
+        
+        /* Config Panel */
+        .config-panel { background: #252526; border: 1px solid #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 20px; align-items: flex-end; }
         .field { display: flex; flex-direction: column; gap: 5px; flex-grow: 1; }
-        label { font-size: 0.85em; color: #888; text-transform: uppercase; font-weight: bold; }
+        label { font-size: 0.75em; color: #888; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em; }
         
-        /* Contenedor para el input de password y el toggle */
+        /* Input Password Toggle */
         .input-wrapper { position: relative; display: flex; align-items: center; }
         .input-wrapper input { width: 100%; padding-right: 40px; }
-        .toggle-password { position: absolute; right: 10px; cursor: pointer; color: #888; user-select: none; font-size: 1.2em; }
+        .toggle-password { position: absolute; right: 10px; cursor: pointer; color: #888; user-select: none; font-size: 1.1em; transition: color 0.2s; }
         .toggle-password:hover { color: #fff; }
 
+        /* Controls */
         .controls { display: flex; gap: 10px; }
-        input, select { padding: 10px; border-radius: 4px; border: 1px solid #444; background: #3d3d3d; color: white; box-sizing: border-box; }
-        button { padding: 10px 20px; border-radius: 4px; border: none; background: #007acc; color: white; cursor: pointer; font-weight: bold; }
-        button:disabled { background: #555; }
+        input, select { padding: 12px; border-radius: 6px; border: 1px solid #444; background: #3d3d3d; color: white; box-sizing: border-box; font-size: 14px; }
+        input:focus, select:focus { outline: none; border-color: #007acc; }
+        button { padding: 10px 25px; border-radius: 6px; border: none; background: #007acc; color: white; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+        button:hover { background: #005fb8; }
+        button:disabled { background: #444; color: #888; cursor: not-allowed; }
         
-        .provider-badge { font-size: 0.7em; background: #444; color: #00ff00; padding: 2px 6px; border-radius: 4px; margin-bottom: 8px; display: inline-block; }
-        .info-msg { color: #ffcc00; font-style: italic; font-size: 0.9em; margin: 5px 0; }
-        .error { color: #ff5555; background: #3a1a1a; padding: 10px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #ff5555; }
+        /* Messages Styles */
+        .provider-badge { font-size: 0.65em; background: #1a3a1a; color: #44ff44; padding: 3px 8px; border-radius: 4px; margin-bottom: 10px; display: inline-block; border: 1px solid #2d5a2d; font-family: monospace; }
+        .info-msg { color: #cca700; font-size: 0.85em; margin: 10px 0; padding: 8px 15px; border-left: 3px solid #cca700; background: rgba(204, 167, 0, 0.1); font-style: italic; border-radius: 0 4px 4px 0; }
+        .error { color: #ff5555; background: #3a1a1a; padding: 12px; border-radius: 6px; margin: 10px 0; border-left: 4px solid #ff5555; font-size: 0.9em; }
+        .message-content { animation: fadeIn 0.3s ease-in; }
+        
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        hr { border: 0; border-top: 1px solid #333; margin: 20px 0; }
     </style>
 </head>
 <body>
 
-    <h2>AI Infra Gateway Playground</h2>
+    <h2 style="margin-top: 0; color: #fff;">AI Infra Gateway <span style="font-weight: normal; color: #666; font-size: 0.6em;">v3.1</span></h2>
 
     <div class="config-panel">
-        <div class="field">
-            <label>API Key</label>
+        <div class="field" style="flex-grow: 2;">
+            <label>API Key de Acceso</label>
             <div class="input-wrapper">
-                <input type="password" id="apiKey" placeholder="sk-..." value="">
+                <input type="password" id="apiKey" placeholder="Pega tu sk-..." value="">
                 <span id="togglePassword" class="toggle-password">👁️</span>
             </div>
         </div>
         <div class="field">
-            <label>Preferir Proveedor</label>
+            <label>Preferencia</label>
             <select id="preferredProvider">
-                <option value="">Default (Ollama First)</option>
-                <option value="ollama">Ollama (Local)</option>
-                <option value="groq">Groq (Cloud)</option>
+                <option value="ollama" selected>Ollama (Local ARM)</option>
+                <option value="groq">Groq (Cloud Burst)</option>
             </select>
         </div>
     </div>
@@ -52,7 +74,7 @@
     <div id="chat"></div>
 
     <div class="controls">
-        <input type="text" id="prompt" placeholder="Escribe un mensaje..." autocomplete="off">
+        <input type="text" id="prompt" placeholder="Hazle una pregunta a la IA..." autocomplete="off">
         <button id="sendBtn">Enviar</button>
     </div>
 
@@ -64,11 +86,11 @@
         const togglePassword = document.getElementById('togglePassword');
         const providerSelect = document.getElementById('preferredProvider');
 
-        // Lógica para mostrar/ocultar API Key
+        // Toggle visibilidad API Key
         togglePassword.addEventListener('click', () => {
-            const type = apiKeyInput.getAttribute('type') === 'password' ? 'text' : 'password';
-            apiKeyInput.setAttribute('type', type);
-            togglePassword.textContent = type === 'password' ? '👁️' : '🙈';
+            const isPass = apiKeyInput.getAttribute('type') === 'password';
+            apiKeyInput.setAttribute('type', isPass ? 'text' : 'password');
+            togglePassword.textContent = isPass ? '🙈' : '👁️';
         });
 
         sendBtn.addEventListener('click', async () => {
@@ -76,12 +98,16 @@
             const apiKey = apiKeyInput.value;
             const preferred = providerSelect.value;
             
-            if (!prompt || !apiKey) return;
+            if (!prompt || !apiKey) {
+                alert("Por favor, ingresa un mensaje y tu API Key.");
+                return;
+            }
 
             sendBtn.disabled = true;
             promptInput.value = '';
             
-            chatDiv.innerHTML += `<div style="color: #569cd6; margin-bottom: 10px;"><b>Tú:</b> ${prompt}</div>`;
+            // UI: Mensaje del usuario
+            chatDiv.innerHTML += `<div style="color: #569cd6; margin-bottom: 15px;"><b>Tú:</b> ${prompt}</div>`;
             
             let contentElement = null;
             let providerDetected = false;
@@ -101,7 +127,7 @@
 
                 if (!response.ok) {
                     const errorText = await response.text();
-                    throw new Error(errorText || `Error ${response.status}`);
+                    throw new Error(errorText || `Error del servidor: ${response.status}`);
                 }
 
                 const reader = response.body.getReader();
@@ -119,27 +145,27 @@
                             try {
                                 const json = JSON.parse(line.substring(6));
                                 
-                                // Manejar mensajes informativos del Gateway (Cambio de provider o falta de permisos)
+                                // Caso 1: Mensajes informativos del Gateway
                                 if (json.provider === "gateway-info") {
-                                    const infoDiv = document.createElement('div');
-                                    infoDiv.className = 'info-msg';
-                                    infoDiv.innerHTML = `<span>${json.content}</span>`;
-                                    chatDiv.appendChild(infoDiv);
-                                    window.scrollTo(0, document.body.scrollHeight);
+                                    chatDiv.innerHTML += `<div class="info-msg">${json.content}</div>`;
+                                    scrollToBottom();
                                     continue;
                                 }
 
+                                // Caso 2: Primer token de respuesta de IA
                                 if (!providerDetected) {
                                     chatDiv.innerHTML += `<div><span class="provider-badge">${json.provider.toUpperCase()}</span></div>`;
                                     contentElement = document.createElement('span');
+                                    contentElement.className = 'message-content';
                                     chatDiv.appendChild(contentElement);
                                     providerDetected = true;
                                 }
 
+                                // Caso 3: Acumulación de contenido
                                 if (json.content) {
                                     contentElement.innerText += json.content;
                                 }
-                                window.scrollTo(0, document.body.scrollHeight);
+                                scrollToBottom();
                             } catch (e) {}
                         }
                     }
@@ -148,9 +174,14 @@
                 chatDiv.innerHTML += `<div class="error"><b>Error:</b> ${err.message}</div>`;
             } finally {
                 sendBtn.disabled = false;
-                chatDiv.innerHTML += '<hr style="border: 0; border-top: 1px solid #333; margin: 15px 0;">';
+                chatDiv.innerHTML += '<hr>';
+                scrollToBottom();
             }
         });
+
+        function scrollToBottom() {
+            chatDiv.scrollTop = chatDiv.scrollHeight;
+        }
 
         promptInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendBtn.click();
