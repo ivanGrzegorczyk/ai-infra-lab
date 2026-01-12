@@ -42,16 +42,16 @@ func (c *ollamaClient) GenerateStream(ctx context.Context, req domain.ChatReques
 		// Ollama usa "messages" pero su estructura es levemente distinta en algunos campos
 		// Por ahora mapea lo básico. El modelo se hardcodea en llama3.1:8b
 		body, _ := json.Marshal(map[string]interface{}{
-			"model":    "llama3.1:8b",
+			"model":    "llama3.2",
 			"messages": req.Messages,
 			"stream":   true,
 			"options": map[string]interface{}{
-				"num_thread":  4,    // Ajustado para los 4 OCPUs de tu VM A1.Flex
-				"num_ctx":     4096, // Ventana de contexto estándar
+				"num_thread":  4,
+				"num_ctx":     4096,
 				"temperature": 0.7,
-				"num_predict": 512, // Limita la respuesta para evitar degradación de performance
+				"num_predict": 512,
 			},
-			"keep_alive": "5m", // Mantiene el modelo en RAM 5 minutos después del último prompt
+			"keep_alive": "5m",
 		})
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
