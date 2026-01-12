@@ -42,6 +42,16 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 		defer close(resChan)
 		defer close(errChan)
 
+		isAllowed := s.createPermissionChecker(keyConfig.AllowedProviders)
+
+		// Validar si el proveedor solicitado está permitido
+		if req.PreferredProvider != "" && !isAllowed(req.PreferredProvider) {
+			resChan <- domain.ChatResponse{
+				Content:  fmt.Sprintf("ℹ️ Tu API Key no tiene acceso a '%s'. Usando proveedores autorizados...", req.PreferredProvider),
+				Provider: ProviderInfoName,
+			}
+		}
+
 		providers := s.selectProviders(req.PreferredProvider, keyConfig)
 
 		if len(providers) == 0 {

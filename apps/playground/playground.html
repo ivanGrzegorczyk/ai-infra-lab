@@ -119,8 +119,13 @@
                             try {
                                 const json = JSON.parse(line.substring(6));
                                 
+                                // Manejar mensajes informativos del Gateway (Cambio de provider o falta de permisos)
                                 if (json.provider === "gateway-info") {
-                                    chatDiv.innerHTML += `<div class="info-msg">${json.content}</div>`;
+                                    const infoDiv = document.createElement('div');
+                                    infoDiv.className = 'info-msg';
+                                    infoDiv.innerHTML = `<span>${json.content}</span>`;
+                                    chatDiv.appendChild(infoDiv);
+                                    window.scrollTo(0, document.body.scrollHeight);
                                     continue;
                                 }
 
