@@ -147,7 +147,7 @@ func (s *chatService) streamFromProvider(ctx context.Context, req domain.ChatReq
 		PreferredProvider: provider.GetName(),
 	})
 
-	const minTokenDelay = 25 * time.Millisecond
+	const minTokenDelay = 40 * time.Millisecond
 
 	for {
 		select {
