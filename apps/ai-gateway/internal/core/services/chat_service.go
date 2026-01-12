@@ -147,7 +147,7 @@ func (s *chatService) streamFromProvider(ctx context.Context, req domain.ChatReq
 		PreferredProvider: provider.GetName(),
 	})
 
-	const minTokenDelay = 40 * time.Millisecond
+	const msPerChar = 15 * time.Millisecond
 
 	for {
 		select {
@@ -156,9 +156,12 @@ func (s *chatService) streamFromProvider(ctx context.Context, req domain.ChatReq
 				return true, nil // Stream completado exitosamente
 			}
 
-			// Si el proveedor es Groq, aplica el delay para suavizar la lectura
+			// Si el proveedor es Groq, aplica el delay por caracter para suavizar la lectura
 			if res.Provider == "groq" {
-				time.Sleep(minTokenDelay)
+				charCount := len(res.Content)
+				if charCount > 0 {
+					time.Sleep(time.Duration(charCount) * msPerChar)
+				}
 			}
 
 			resChan <- res
