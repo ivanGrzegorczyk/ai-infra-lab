@@ -49,7 +49,7 @@ func (c *ollamaClient) GenerateStream(ctx context.Context, req domain.ChatReques
 				"num_thread":  4,
 				"num_ctx":     4096,
 				"temperature": 0.7,
-				"num_predict": 512,
+				"num_predict": 1024,
 			},
 			"keep_alive": "5m",
 		})
