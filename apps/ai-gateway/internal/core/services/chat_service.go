@@ -9,6 +9,19 @@ import (
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
 )
 
+// Constantes para nombres de proveedores y mensajes
+const (
+	ProviderGroq   = "groq"
+	ProviderOllama = "ollama"
+
+	ProviderInfoName = "gateway-info"
+
+	MsgNoPermissions      = "tu API Key no tiene permisos para ningún proveedor de IA"
+	MsgSwitchingProvider  = "⚠️ Cambiando de proveedor debido a un error..."
+	MsgAllProvidersFailed = "todos los proveedores fallaron. Último error: %v"
+	MsgProviderError      = "Error con proveedor %s: %v. Intentando fallback..."
+)
+
 type chatService struct {
 	local    ports.LLMProvider // Ollama
 	external ports.LLMProvider // Groq
@@ -29,84 +42,110 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 		defer close(resChan)
 		defer close(errChan)
 
-		// Definir el orden de proveedores basado en la preferencia
-		var providers []ports.LLMProvider
-		if req.PreferredProvider == "groq" {
-			providers = []ports.LLMProvider{s.external, s.local}
-		} else {
-			providers = []ports.LLMProvider{s.local, s.external}
+		providers := s.selectProviders(req.PreferredProvider, keyConfig)
+
+		if len(providers) == 0 {
+			errChan <- fmt.Errorf(MsgNoPermissions)
+			return
 		}
 
-		var lastErr error
-		for i, provider := range providers {
-			// Si es el segundo intento, enviar un evento SSE de "info"
-			if i > 0 {
-				resChan <- domain.ChatResponse{
-					Content:  "⚠️ Cambiando de proveedor debido a un error...",
-					Provider: "gateway-info",
-				}
-			}
-
-			// Ejecutar el stream del proveedor
-			providerResChan, providerErrChan := provider.GenerateStream(ctx, domain.ChatRequest{
-				Messages:          req.Messages,
-				PreferredProvider: provider.GetName(),
-			})
-
-			// Proxy del stream
-			success := true
-		streamLoop:
-			for {
-				select {
-				case res, ok := <-providerResChan:
-					if !ok {
-						if success {
-							return // Éxito completo
-						}
-						break streamLoop
-					}
-					resChan <- res
-				case err := <-providerErrChan:
-					if err != nil {
-						lastErr = err
-						success = false
-						log.Printf("Error con proveedor %s: %v. Intentando fallback...", provider.GetName(), err)
-					}
-					break streamLoop
-				case <-ctx.Done():
-					return
-				}
-
-				if !success {
-					break streamLoop
-				}
-			}
-
-			if success {
-				return
-			}
+		if err := s.executeWithFallback(ctx, req, providers, resChan); err != nil {
+			errChan <- err
 		}
-
-		errChan <- fmt.Errorf("todos los proveedores fallaron. Último error: %v", lastErr)
 	}()
 
 	return resChan, errChan
 }
 
-// proxyStream simplemente reenvía los datos de un canal a otro
-func (s *chatService) proxyStream(outR chan domain.ChatResponse, outE chan error, inR <-chan domain.ChatResponse, inE <-chan error) {
+// selectProviders devuelve la lista de proveedores en orden de prioridad según preferencias y permisos
+func (s *chatService) selectProviders(preferredProvider string, keyConfig domain.APIKeyConfig) []ports.LLMProvider {
+	isAllowed := s.createPermissionChecker(keyConfig.AllowedProviders)
+
+	var providers []ports.LLMProvider
+
+	if preferredProvider == ProviderGroq {
+		providers = s.addProviderIfAllowed(providers, s.external, ProviderGroq, isAllowed)
+		providers = s.addProviderIfAllowed(providers, s.local, ProviderOllama, isAllowed)
+	} else {
+		providers = s.addProviderIfAllowed(providers, s.local, ProviderOllama, isAllowed)
+		providers = s.addProviderIfAllowed(providers, s.external, ProviderGroq, isAllowed)
+	}
+
+	return providers
+}
+
+// createPermissionChecker devuelve una función que verifica si un proveedor está permitido
+func (s *chatService) createPermissionChecker(allowedProviders []string) func(string) bool {
+	return func(provider string) bool {
+		for _, allowed := range allowedProviders {
+			if allowed == provider {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// addProviderIfAllowed agrega un proveedor a la lista si está permitido
+func (s *chatService) addProviderIfAllowed(providers []ports.LLMProvider, provider ports.LLMProvider, providerName string, isAllowed func(string) bool) []ports.LLMProvider {
+	if isAllowed(providerName) {
+		return append(providers, provider)
+	}
+	return providers
+}
+
+// executeWithFallback intenta los proveedores en orden hasta que uno tenga éxito
+func (s *chatService) executeWithFallback(ctx context.Context, req domain.ChatRequest, providers []ports.LLMProvider, resChan chan domain.ChatResponse) error {
+	var lastErr error
+
+	for i, provider := range providers {
+		if i > 0 {
+			s.sendProviderSwitchNotification(resChan)
+		}
+
+		success, err := s.streamFromProvider(ctx, req, provider, resChan)
+		if success {
+			return nil
+		}
+
+		lastErr = err
+		log.Printf(MsgProviderError, provider.GetName(), err)
+	}
+
+	return fmt.Errorf(MsgAllProvidersFailed, lastErr)
+}
+
+// sendProviderSwitchNotification envía un mensaje de notificación sobre el cambio de proveedor
+func (s *chatService) sendProviderSwitchNotification(resChan chan domain.ChatResponse) {
+	resChan <- domain.ChatResponse{
+		Content:  MsgSwitchingProvider,
+		Provider: ProviderInfoName,
+	}
+}
+
+// streamFromProvider transmite respuestas desde un único proveedor
+func (s *chatService) streamFromProvider(ctx context.Context, req domain.ChatRequest, provider ports.LLMProvider, resChan chan domain.ChatResponse) (bool, error) {
+	providerResChan, providerErrChan := provider.GenerateStream(ctx, domain.ChatRequest{
+		Messages:          req.Messages,
+		PreferredProvider: provider.GetName(),
+	})
+
 	for {
 		select {
-		case r, ok := <-inR:
+		case res, ok := <-providerResChan:
 			if !ok {
-				return
+				return true, nil // Stream completado exitosamente
 			}
-			outR <- r
-		case e := <-inE:
-			if e != nil {
-				outE <- e
+			resChan <- res
+
+		case err := <-providerErrChan:
+			if err != nil {
+				return false, err
 			}
-			return
+			return true, nil
+
+		case <-ctx.Done():
+			return false, ctx.Err()
 		}
 	}
 }

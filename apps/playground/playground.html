@@ -2,24 +2,57 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>AI Infra Gateway - Playground</title>
+    <title>AI Infra Gateway - Playground v3</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #ddd; max-width: 800px; margin: 40px auto; padding: 20px; }
         #chat { background: #2d2d2d; border-radius: 8px; padding: 20px; min-height: 300px; margin-bottom: 20px; white-space: pre-wrap; line-height: 1.5; border: 1px solid #444; overflow-y: auto; max-height: 500px; }
+        
+        .config-panel { background: #252526; border: 1px solid #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; align-items: flex-end; }
+        .field { display: flex; flex-direction: column; gap: 5px; flex-grow: 1; }
+        label { font-size: 0.85em; color: #888; text-transform: uppercase; font-weight: bold; }
+        
+        /* Contenedor para el input de password y el toggle */
+        .input-wrapper { position: relative; display: flex; align-items: center; }
+        .input-wrapper input { width: 100%; padding-right: 40px; }
+        .toggle-password { position: absolute; right: 10px; cursor: pointer; color: #888; user-select: none; font-size: 1.2em; }
+        .toggle-password:hover { color: #fff; }
+
         .controls { display: flex; gap: 10px; }
-        input { flex-grow: 1; padding: 12px; border-radius: 4px; border: 1px solid #444; background: #3d3d3d; color: white; }
+        input, select { padding: 10px; border-radius: 4px; border: 1px solid #444; background: #3d3d3d; color: white; box-sizing: border-box; }
         button { padding: 10px 20px; border-radius: 4px; border: none; background: #007acc; color: white; cursor: pointer; font-weight: bold; }
         button:disabled { background: #555; }
-        .provider-badge { font-size: 0.8em; color: #00ff00; margin-bottom: 8px; font-weight: bold; display: block; }
-        .message-content { color: #eee; }
-        .error { color: #ff5555; font-weight: bold; }
+        
+        .provider-badge { font-size: 0.7em; background: #444; color: #00ff00; padding: 2px 6px; border-radius: 4px; margin-bottom: 8px; display: inline-block; }
+        .info-msg { color: #ffcc00; font-style: italic; font-size: 0.9em; margin: 5px 0; }
+        .error { color: #ff5555; background: #3a1a1a; padding: 10px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #ff5555; }
     </style>
 </head>
 <body>
-    <h2>🚀 AI Infra Gateway Playground</h2>
-    <div id="chat">Esperando prompt...</div>
+
+    <h2>AI Infra Gateway Playground</h2>
+
+    <div class="config-panel">
+        <div class="field">
+            <label>API Key</label>
+            <div class="input-wrapper">
+                <input type="password" id="apiKey" placeholder="sk-..." value="">
+                <span id="togglePassword" class="toggle-password">👁️</span>
+            </div>
+        </div>
+        <div class="field">
+            <label>Preferir Proveedor</label>
+            <select id="preferredProvider">
+                <option value="">Default (Ollama First)</option>
+                <option value="ollama">Ollama (Local)</option>
+                <option value="groq">Groq (Cloud)</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="chat"></div>
+
     <div class="controls">
-        <input type="text" id="prompt" placeholder="Escribí tu mensaje aquí..." value="Contame en tres párrafos por qué Go es ideal para infra de IA.">
+        <input type="text" id="prompt" placeholder="Escribe un mensaje..." autocomplete="off">
         <button id="sendBtn">Enviar</button>
     </div>
 
@@ -27,31 +60,49 @@
         const chatDiv = document.getElementById('chat');
         const promptInput = document.getElementById('prompt');
         const sendBtn = document.getElementById('sendBtn');
+        const apiKeyInput = document.getElementById('apiKey');
+        const togglePassword = document.getElementById('togglePassword');
+        const providerSelect = document.getElementById('preferredProvider');
+
+        // Lógica para mostrar/ocultar API Key
+        togglePassword.addEventListener('click', () => {
+            const type = apiKeyInput.getAttribute('type') === 'password' ? 'text' : 'password';
+            apiKeyInput.setAttribute('type', type);
+            togglePassword.textContent = type === 'password' ? '👁️' : '🙈';
+        });
 
         sendBtn.addEventListener('click', async () => {
             const prompt = promptInput.value;
-            if (!prompt) return;
+            const apiKey = apiKeyInput.value;
+            const preferred = providerSelect.value;
+            
+            if (!prompt || !apiKey) return;
 
-            // Limpiar chat y deshabilitar botón
-            chatDiv.innerHTML = ''; 
             sendBtn.disabled = true;
-
-            // Variables de referencia para este mensaje específico
+            promptInput.value = '';
+            
+            chatDiv.innerHTML += `<div style="color: #569cd6; margin-bottom: 10px;"><b>Tú:</b> ${prompt}</div>`;
+            
             let contentElement = null;
             let providerDetected = false;
 
             try {
                 const response = await fetch('https://chat.zyklab.me/v1/chat', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-API-Key': apiKey 
+                    },
                     body: JSON.stringify({
-                        model: "llama3.1:8b",
                         messages: [{ role: "user", content: prompt }],
-                        stream: true
+                        preferred_provider: preferred 
                     })
                 });
 
-                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || `Error ${response.status}`);
+                }
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
@@ -64,52 +115,38 @@
                     const lines = chunk.split('\n');
 
                     for (const line of lines) {
-                        if (!line.startsWith('data: ')) continue;
-                        
-                        const data = line.slice(6).trim();
-                        if (data === '[DONE]') continue;
-
-                        try {
-                            const json = JSON.parse(data);
-
-                            // Si es el primer token, creamos la estructura del mensaje
-                            if (!providerDetected) {
-                                // Crear Badge del proveedor
-                                const badge = document.createElement('span');
-                                badge.className = 'provider-badge';
-                                badge.innerText = `Respondido por: ${json.provider.toUpperCase()}`;
-                                chatDiv.appendChild(badge);
-
-                                // Crear contenedor de texto y guardar la referencia
-                                contentElement = document.createElement('span');
-                                contentElement.className = 'message-content';
-                                chatDiv.appendChild(contentElement);
+                        if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                            try {
+                                const json = JSON.parse(line.substring(6));
                                 
-                                providerDetected = true;
-                            }
+                                if (json.provider === "gateway-info") {
+                                    chatDiv.innerHTML += `<div class="info-msg">${json.content}</div>`;
+                                    continue;
+                                }
 
-                            // Actualizar el contenido usando la referencia de memoria directa
-                            if (contentElement && json.content) {
-                                contentElement.innerText += json.content;
-                            }
-                            
-                            window.scrollTo(0, document.body.scrollHeight);
-                        } catch (e) {
-                            // Ignorar errores de JSON incompleto en el stream
+                                if (!providerDetected) {
+                                    chatDiv.innerHTML += `<div><span class="provider-badge">${json.provider.toUpperCase()}</span></div>`;
+                                    contentElement = document.createElement('span');
+                                    chatDiv.appendChild(contentElement);
+                                    providerDetected = true;
+                                }
+
+                                if (json.content) {
+                                    contentElement.innerText += json.content;
+                                }
+                                window.scrollTo(0, document.body.scrollHeight);
+                            } catch (e) {}
                         }
                     }
                 }
             } catch (err) {
-                const errorDiv = document.createElement('div');
-                errorDiv.className = 'error';
-                errorDiv.innerText = "Error: " + err.message;
-                chatDiv.appendChild(errorDiv);
+                chatDiv.innerHTML += `<div class="error"><b>Error:</b> ${err.message}</div>`;
             } finally {
                 sendBtn.disabled = false;
+                chatDiv.innerHTML += '<hr style="border: 0; border-top: 1px solid #333; margin: 15px 0;">';
             }
         });
 
-        // Permitir enviar con Enter
         promptInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendBtn.click();
         });
