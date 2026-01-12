@@ -83,9 +83,9 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				log.Printf("Stream finalizado exitosamente. Usuario: %s, Proveedor: %s", keyConfig.Name, provider)
 
-				// Registra el total de tokens de este mensaje
+				// Registra métricas del stream completado
 				observability.TokensPerRequest.WithLabelValues(keyConfig.Name, provider).Observe(float64(tokenCount))
-				// El canal se cerró con éxito, registra el 200 con el proveedor que atendió la petición
+				observability.TokensTotal.WithLabelValues(keyConfig.Name, provider).Add(float64(tokenCount))
 				observability.HttpRequestsTotal.WithLabelValues("200", keyConfig.Name, provider).Inc()
 
 				// Termina el stream con un mensaje de fin
@@ -112,9 +112,6 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			}
 
 			tokenCount++
-
-			// Incrementa el contador total de tokens
-			observability.TokensTotal.WithLabelValues(keyConfig.Name, provider).Inc()
 
 			// Envia el token en formato SSE
 			jsonData, _ := json.Marshal(res)

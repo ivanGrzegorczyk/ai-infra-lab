@@ -7,6 +7,7 @@ import (
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/observability"
 )
 
 // Constantes para nombres de proveedores y mensajes
@@ -46,8 +47,13 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 
 		// Validar si el proveedor solicitado está permitido
 		if req.PreferredProvider != "" && !isAllowed(req.PreferredProvider) {
+			observability.ForbiddenProviderAttempts.WithLabelValues(
+				keyConfig.Name,
+				req.PreferredProvider,
+			).Inc()
+
 			resChan <- domain.ChatResponse{
-				Content:  fmt.Sprintf("ℹ️ Tu API Key no tiene acceso a '%s'. Usando proveedores autorizados...", req.PreferredProvider),
+				Content:  fmt.Sprintf("ℹ️ Tu API Key no tiene acceso a '%s'...", req.PreferredProvider),
 				Provider: ProviderInfoName,
 			}
 		}
