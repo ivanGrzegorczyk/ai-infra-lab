@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: ai-gateway
-        image: ivangrz/ai-infra-gateway:1.0.2
+        image: ivangrz/ai-infra-gateway:1.0.9
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
@@ -36,6 +36,14 @@ spec:
           requests:
             memory: "64Mi"
             cpu: "100m"
+        volumeMounts:
+        - name: keys-volume
+          mountPath: /app/configs/keys.json
+          subPath: keys.json
+      volumes:
+      - name: keys-volume
+        secret:
+          secretName: ai-gateway-keys
 ---
 apiVersion: v1
 kind: Service
