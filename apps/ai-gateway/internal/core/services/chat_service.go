@@ -147,7 +147,7 @@ func (s *chatService) streamFromProvider(ctx context.Context, req domain.ChatReq
 		PreferredProvider: provider.GetName(),
 	})
 
-	const msPerChar = 40 * time.Millisecond
+	const msPerChar = 30 * time.Millisecond
 
 	for {
 		select {
