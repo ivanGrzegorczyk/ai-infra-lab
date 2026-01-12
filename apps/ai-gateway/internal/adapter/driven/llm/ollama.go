@@ -45,6 +45,13 @@ func (c *ollamaClient) GenerateStream(ctx context.Context, req domain.ChatReques
 			"model":    "llama3.1:8b",
 			"messages": req.Messages,
 			"stream":   true,
+			"options": map[string]interface{}{
+				"num_thread":  4,    // Ajustado para los 4 OCPUs de tu VM A1.Flex
+				"num_ctx":     4096, // Ventana de contexto estándar
+				"temperature": 0.7,
+				"num_predict": 512, // Limita la respuesta para evitar degradación de performance
+			},
+			"keep_alive": "5m", // Mantiene el modelo en RAM 5 minutos después del último prompt
 		})
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
