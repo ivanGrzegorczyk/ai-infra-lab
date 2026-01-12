@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
@@ -41,11 +40,11 @@ func (c *ollamaClient) GenerateStream(ctx context.Context, req domain.ChatReques
 		url := fmt.Sprintf("%s/api/chat", c.baseURL)
 
 		// Ollama usa "messages" pero su estructura es levemente distinta en algunos campos
-		// Por ahora mapea lo básico
+		// Por ahora mapea lo básico. El modelo se hardcodea en llama3.1:8b
 		body, _ := json.Marshal(map[string]interface{}{
-			"model":    req.Model,
+			"model":    "llama3.1:8b",
 			"messages": req.Messages,
-			"stream":   req.Stream,
+			"stream":   true,
 		})
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
@@ -81,9 +80,8 @@ func (c *ollamaClient) GenerateStream(ctx context.Context, req domain.ChatReques
 			}
 
 			resChan <- domain.ChatResponse{
-				Content:   ollamaResp.Message.Content,
-				Provider:  "ollama",
-				CreatedAt: time.Now(),
+				Content:  ollamaResp.Message.Content,
+				Provider: "ollama",
 			}
 
 			if ollamaResp.Done {

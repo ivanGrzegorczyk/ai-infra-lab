@@ -40,10 +40,21 @@ func TestExecuteChat(t *testing.T) {
 	mockExternalProvider := createMockProvider("Hola desde el mock externo")
 
 	service := NewChatService(mockLocalProvider, mockExternalProvider)
-	req := domain.ChatRequest{Model: "test", Stream: true}
+
+	req := domain.ChatRequest{
+		Messages: []domain.ChatMessage{
+			{Role: "user", Content: "Test message"},
+		},
+	}
+
+	keyConfig := domain.APIKeyConfig{
+		Key:              "test-key",
+		Name:             "test-user",
+		AllowedProviders: []string{"ollama", "groq"},
+	}
 
 	// Ejecución
-	resChan, errChan := service.ExecuteChat(context.Background(), req)
+	resChan, errChan := service.ExecuteChat(context.Background(), req, keyConfig)
 
 	// Validación
 	select {

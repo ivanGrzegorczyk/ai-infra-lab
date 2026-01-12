@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"log"
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
@@ -19,40 +21,76 @@ func NewChatService(local, external ports.LLMProvider) ports.ChatService {
 	}
 }
 
-func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error) {
-	// 1. Intentamos con el proveedor local (Ollama)
-	resChan, errChan := s.local.GenerateStream(ctx, req)
-
-	// Creamos canales de salida que nosotros controlamos
-	outRes := make(chan domain.ChatResponse)
-	outErr := make(chan error, 1)
+func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, keyConfig domain.APIKeyConfig) (<-chan domain.ChatResponse, <-chan error) {
+	resChan := make(chan domain.ChatResponse)
+	errChan := make(chan error, 1)
 
 	go func() {
-		defer close(outRes)
-		defer close(outErr)
+		defer close(resChan)
+		defer close(errChan)
 
-		// Escuchamos el primer evento del proveedor local
-		select {
-		case err := <-errChan:
-			if err != nil {
-				// Si Ollama falla de entrada (saturación/down), disparamos Groq
-				fallbackRes, fallbackErr := s.external.GenerateStream(ctx, req)
-				s.proxyStream(outRes, outErr, fallbackRes, fallbackErr)
-				return
-			}
-		case res, ok := <-resChan:
-			if !ok {
-				return
-			}
-			// Si el primer token llega bien, seguimos con Ollama
-			outRes <- res
-			s.proxyStream(outRes, outErr, resChan, errChan)
-		case <-ctx.Done():
-			return
+		// Definir el orden de proveedores basado en la preferencia
+		var providers []ports.LLMProvider
+		if req.PreferredProvider == "groq" {
+			providers = []ports.LLMProvider{s.external, s.local}
+		} else {
+			providers = []ports.LLMProvider{s.local, s.external}
 		}
+
+		var lastErr error
+		for i, provider := range providers {
+			// Si es el segundo intento, enviar un evento SSE de "info"
+			if i > 0 {
+				resChan <- domain.ChatResponse{
+					Content:  "⚠️ Cambiando de proveedor debido a un error...",
+					Provider: "gateway-info",
+				}
+			}
+
+			// Ejecutar el stream del proveedor
+			providerResChan, providerErrChan := provider.GenerateStream(ctx, domain.ChatRequest{
+				Messages:          req.Messages,
+				PreferredProvider: provider.GetName(),
+			})
+
+			// Proxy del stream
+			success := true
+		streamLoop:
+			for {
+				select {
+				case res, ok := <-providerResChan:
+					if !ok {
+						if success {
+							return // Éxito completo
+						}
+						break streamLoop
+					}
+					resChan <- res
+				case err := <-providerErrChan:
+					if err != nil {
+						lastErr = err
+						success = false
+						log.Printf("Error con proveedor %s: %v. Intentando fallback...", provider.GetName(), err)
+					}
+					break streamLoop
+				case <-ctx.Done():
+					return
+				}
+
+				if !success {
+					break streamLoop
+				}
+			}
+
+			if success {
+				return
+			}
+		}
+
+		errChan <- fmt.Errorf("todos los proveedores fallaron. Último error: %v", lastErr)
 	}()
 
-	return outRes, outErr
+	return resChan, errChan
 }
 
 // proxyStream simplemente reenvía los datos de un canal a otro

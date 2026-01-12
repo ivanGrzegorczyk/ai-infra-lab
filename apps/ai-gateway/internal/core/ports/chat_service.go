@@ -8,5 +8,5 @@ import (
 
 // ChatService orquesta la lógica de ruteo y fallbacks.
 type ChatService interface {
-	ExecuteChat(ctx context.Context, req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error)
+	ExecuteChat(ctx context.Context, req domain.ChatRequest, keyConfig domain.APIKeyConfig) (<-chan domain.ChatResponse, <-chan error)
 }

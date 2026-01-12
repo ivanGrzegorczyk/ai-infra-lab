@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
@@ -93,9 +92,8 @@ func (c *groqClient) GenerateStream(ctx context.Context, req domain.ChatRequest)
 
 			if len(groqResp.Choices) > 0 {
 				resChan <- domain.ChatResponse{
-					Content:   groqResp.Choices[0].Delta.Content,
-					Provider:  "groq",
-					CreatedAt: time.Now(),
+					Content:  groqResp.Choices[0].Delta.Content,
+					Provider: "groq",
 				}
 			}
 		}

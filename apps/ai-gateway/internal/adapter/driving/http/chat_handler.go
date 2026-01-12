@@ -33,10 +33,17 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 1. Extraer la configuración de la API Key del contexto (inyectada por el Middleware)
+	keyConfig, ok := r.Context().Value(APIKeyConfigKey).(domain.APIKeyConfig)
+	if !ok {
+		http.Error(w, "Error interno: Configuración de usuario no encontrada", http.StatusInternalServerError)
+		return
+	}
+
 	// Decodificar el request
 	var chatReq domain.ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
-		observability.HttpRequestsTotal.WithLabelValues("400", "unknown", "gateway").Inc()
+		observability.HttpRequestsTotal.WithLabelValues("400", "unknown", keyConfig.Name).Inc()
 		http.Error(w, "Request inválido", http.StatusBadRequest)
 		return
 	}
@@ -47,8 +54,8 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	// Llamar al servicio
-	resChan, errChan := h.service.ExecuteChat(r.Context(), chatReq)
+	// Llamar al servicio pasando la configuración del usuario
+	resChan, errChan := h.service.ExecuteChat(r.Context(), chatReq, keyConfig)
 
 	// El "Flusher" es el que empuja los datos al cliente inmediatamente
 	flusher, ok := w.(http.Flusher)
@@ -57,7 +64,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Iniciando stream para modelo: %s", chatReq.Model)
+	log.Printf("Iniciando stream para usuario: %s, preferencia: %s", keyConfig.Name, chatReq.PreferredProvider)
 
 	for {
 		select {
@@ -68,18 +75,18 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				log.Println("[Error] Conexión cerrada por el cliente o error en el stream:", err)
 				// Si hubo error, usa el último proveedor detectado o "unknown"
-				observability.HttpRequestsTotal.WithLabelValues("500", chatReq.Model, provider).Inc()
+				observability.HttpRequestsTotal.WithLabelValues("500", keyConfig.Name, provider).Inc()
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 				return
 			}
 		case res, ok := <-resChan:
 			if !ok {
-				log.Printf("Stream finalizado exitosamente. Proveedor final: %s", provider)
+				log.Printf("Stream finalizado exitosamente. Usuario: %s, Proveedor: %s", keyConfig.Name, provider)
 
 				// Registra el total de tokens de este mensaje
-				observability.TokensPerRequest.WithLabelValues(chatReq.Model, provider).Observe(float64(tokenCount))
+				observability.TokensPerRequest.WithLabelValues(keyConfig.Name, provider).Observe(float64(tokenCount))
 				// El canal se cerró con éxito, registra el 200 con el proveedor que atendió la petición
-				observability.HttpRequestsTotal.WithLabelValues("200", chatReq.Model, provider).Inc()
+				observability.HttpRequestsTotal.WithLabelValues("200", keyConfig.Name, provider).Inc()
 
 				// Termina el stream con un mensaje de fin
 				fmt.Fprintf(w, "data: [DONE]\n\n")
@@ -93,7 +100,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			// Si es el primer token, calcula el TTFT
 			if isFirstToken {
 				duration := time.Since(startTime).Seconds()
-				observability.TimeToFirstToken.WithLabelValues(chatReq.Model, provider).Observe(duration)
+				observability.TimeToFirstToken.WithLabelValues(keyConfig.Name, provider).Observe(duration)
 				isFirstToken = false
 			}
 
@@ -107,7 +114,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			tokenCount++
 
 			// Incrementa el contador total de tokens
-			observability.TokensTotal.WithLabelValues(chatReq.Model, provider).Inc()
+			observability.TokensTotal.WithLabelValues(keyConfig.Name, provider).Inc()
 
 			// Envia el token en formato SSE
 			jsonData, _ := json.Marshal(res)
