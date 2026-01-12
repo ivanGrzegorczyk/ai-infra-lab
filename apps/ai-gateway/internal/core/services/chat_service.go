@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
@@ -146,12 +147,20 @@ func (s *chatService) streamFromProvider(ctx context.Context, req domain.ChatReq
 		PreferredProvider: provider.GetName(),
 	})
 
+	const minTokenDelay = 25 * time.Millisecond
+
 	for {
 		select {
 		case res, ok := <-providerResChan:
 			if !ok {
 				return true, nil // Stream completado exitosamente
 			}
+
+			// Si el proveedor es Groq, aplica el delay para suavizar la lectura
+			if res.Provider == "groq" {
+				time.Sleep(minTokenDelay)
+			}
+
 			resChan <- res
 
 		case err := <-providerErrChan:
