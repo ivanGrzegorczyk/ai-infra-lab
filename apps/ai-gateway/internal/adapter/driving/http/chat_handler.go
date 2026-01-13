@@ -54,9 +54,6 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	// Llamar al servicio pasando la configuración del usuario
-	resChan, errChan := h.service.ExecuteChat(r.Context(), chatReq, keyConfig)
-
 	// El "Flusher" es el que empuja los datos al cliente inmediatamente
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -64,61 +61,62 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resChan := make(chan domain.ChatResponse)
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer close(resChan)
+		err := h.service.ExecuteChat(r.Context(), chatReq, keyConfig, resChan)
+		if err != nil {
+			errChan <- err
+		}
+	}()
+
 	log.Printf("Iniciando stream para usuario: %s, preferencia: %s", keyConfig.Name, chatReq.PreferredProvider)
 
 	for {
 		select {
-		case <-r.Context().Done():
-			// Si el cliente cierra la conexión, deja de procesar
-			return
 		case err := <-errChan:
 			if err != nil {
-				log.Println("[Error] Conexión cerrada por el cliente o error en el stream:", err)
-				// Si hubo error, usa el último proveedor detectado o "unknown"
 				observability.HttpRequestsTotal.WithLabelValues("500", keyConfig.Name, provider).Inc()
+				// Si falla, envia evento de error al frontend
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+				flusher.Flush()
 				return
 			}
 		case res, ok := <-resChan:
 			if !ok {
-				log.Printf("Stream finalizado exitosamente. Usuario: %s, Proveedor: %s", keyConfig.Name, provider)
+				log.Printf("Stream finalizado. Usuario: %s", keyConfig.Name)
 
-				// Registra métricas del stream completado
+				// Métricas finales
 				observability.TokensPerRequest.WithLabelValues(keyConfig.Name, provider).Observe(float64(tokenCount))
 				observability.TokensTotal.WithLabelValues(keyConfig.Name, provider).Add(float64(tokenCount))
 				observability.HttpRequestsTotal.WithLabelValues("200", keyConfig.Name, provider).Inc()
 
-				// Termina el stream con un mensaje de fin
 				fmt.Fprintf(w, "data: [DONE]\n\n")
 				flusher.Flush()
 				return
 			}
 
-			// Actualiza el proveedor con los datos reales de la respuesta
+			// Lógica de métricas y actualización de provider
 			provider = res.Provider
-
-			// Si es el primer token, calcula el TTFT
 			if isFirstToken {
 				duration := time.Since(startTime).Seconds()
 				observability.TimeToFirstToken.WithLabelValues(keyConfig.Name, provider).Observe(duration)
 				isFirstToken = false
 			}
 
-			// Asegura que siempre haya un proveedor válido
 			if res.Provider != "" {
 				provider = res.Provider
-			} else {
-				log.Println("[WARN] Recibido token con Provider VACÍO")
 			}
-
 			tokenCount++
 
-			// Envia el token en formato SSE
-			jsonData, _ := json.Marshal(res)
-			fmt.Fprintf(w, "data: %s\n\n", jsonData)
-
-			// Fuerza el envío del buffer al cliente
+			// Enviar payload JSON
+			data, _ := json.Marshal(res)
+			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
+		case <-r.Context().Done():
+			return
 		}
 	}
 }

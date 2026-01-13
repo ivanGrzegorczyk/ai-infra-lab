@@ -8,7 +8,6 @@ import (
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
-	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/observability"
 )
 
 // Constantes para nombres de proveedores y mensajes
@@ -27,51 +26,82 @@ const (
 type chatService struct {
 	local    ports.LLMProvider // Ollama
 	external ports.LLMProvider // Groq
+	sessions ports.SessionRepository
 }
 
-func NewChatService(local, external ports.LLMProvider) ports.ChatService {
+func NewChatService(local, external ports.LLMProvider, sessions ports.SessionRepository) ports.ChatService {
 	return &chatService{
 		local:    local,
 		external: external,
+		sessions: sessions,
 	}
 }
 
-func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, keyConfig domain.APIKeyConfig) (<-chan domain.ChatResponse, <-chan error) {
-	resChan := make(chan domain.ChatResponse)
-	errChan := make(chan error, 1)
+func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, keyConfig domain.APIKeyConfig, resChan chan domain.ChatResponse) error {
+	var fullHistory []domain.ChatMessage
 
-	go func() {
-		defer close(resChan)
-		defer close(errChan)
+	// 1. Recuperar historial si hay session_id
+	if req.SessionID != "" {
+		history, err := s.sessions.GetHistory(ctx, req.SessionID)
+		if err == nil && len(history) > 0 {
+			fullHistory = history
+		}
+	}
 
-		isAllowed := s.createPermissionChecker(keyConfig.AllowedProviders)
+	// 2. Unir el historial con los nuevos mensajes del usuario
+	fullHistory = append(fullHistory, req.Messages...)
 
-		// Validar si el proveedor solicitado está permitido
-		if req.PreferredProvider != "" && !isAllowed(req.PreferredProvider) {
-			observability.ForbiddenProviderAttempts.WithLabelValues(
-				keyConfig.Name,
-				req.PreferredProvider,
-			).Inc()
+	// Preparamos la request "aumentada" para los proveedores
+	providerReq := req
+	providerReq.Messages = fullHistory
 
-			resChan <- domain.ChatResponse{
-				Content:  fmt.Sprintf("ℹ️ Tu API Key no tiene acceso a '%s'...", req.PreferredProvider),
-				Provider: ProviderInfoName,
+	providers := s.getOrderedProviders(req.PreferredProvider, keyConfig)
+	if len(providers) == 0 {
+		return fmt.Errorf(MsgNoPermissions)
+	}
+
+	var lastErr error
+	for i, provider := range providers {
+		if i > 0 {
+			s.sendProviderSwitchNotification(resChan)
+		}
+
+		// 3. Captura del stream para Redis
+		// Usamos un canal intermedio para "espiar" lo que dice la IA
+		// y poder guardarlo en el historial al terminar.
+		proxyChan := make(chan domain.ChatResponse)
+		var assistantResponseAccumulator string
+
+		// Goroutine para pasar del proxy al canal real y acumular el texto
+		go func() {
+			for res := range proxyChan {
+				if res.Provider != ProviderInfoName {
+					assistantResponseAccumulator += res.Content
+				}
+				resChan <- res
 			}
+		}()
+
+		success, err := s.streamFromProvider(ctx, providerReq, provider, proxyChan)
+		close(proxyChan)
+
+		if success {
+			// 4. Guardar la conversación completa en Redis
+			if req.SessionID != "" {
+				fullHistory = append(fullHistory, domain.ChatMessage{
+					Role:    "assistant",
+					Content: assistantResponseAccumulator,
+				})
+				_ = s.sessions.SaveHistory(ctx, req.SessionID, fullHistory)
+			}
+			return nil
 		}
 
-		providers := s.selectProviders(req.PreferredProvider, keyConfig)
+		lastErr = err
+		log.Printf(MsgProviderError, provider.GetName(), err)
+	}
 
-		if len(providers) == 0 {
-			errChan <- fmt.Errorf(MsgNoPermissions)
-			return
-		}
-
-		if err := s.executeWithFallback(ctx, req, providers, resChan); err != nil {
-			errChan <- err
-		}
-	}()
-
-	return resChan, errChan
+	return fmt.Errorf(MsgAllProvidersFailed, lastErr)
 }
 
 // selectProviders devuelve la lista de proveedores en orden de prioridad según preferencias y permisos
