@@ -54,12 +54,8 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 	// 2. Unir el historial con los nuevos mensajes del usuario
 	fullHistory = append(fullHistory, req.Messages...)
 
-	const maxTokens = 200
-	const safetyMargin = 50
-
-	currentTokens := s.countTokens(fullHistory)
-	log.Printf("DEBUG: Session: %s | Tokens actuales: %d | Límite para resumen: %d",
-		req.SessionID, currentTokens, maxTokens-safetyMargin)
+	const maxTokens = 4096
+	const safetyMargin = 1000
 
 	if s.countTokens(fullHistory) > (maxTokens - safetyMargin) {
 		// Toma los mensajes del medio y los resume (deja el último del usuario afuera)
@@ -71,7 +67,7 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 			if err == nil {
 				// Reemplaza el pasado por el resumen + el último mensaje
 				fullHistory = []domain.ChatMessage{summary, lastMessage}
-				log.Println("Historial resumido exitosamente.")
+				log.Printf("Sesión %s resumida exitosamente.", req.SessionID)
 			}
 		}
 	}
