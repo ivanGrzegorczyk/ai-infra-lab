@@ -55,7 +55,7 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 	providerReq := req
 	providerReq.Messages = fullHistory
 
-	providers := s.getOrderedProviders(req.PreferredProvider, keyConfig)
+	providers := s.selectProviders(req.PreferredProvider, keyConfig)
 	if len(providers) == 0 {
 		return fmt.Errorf(MsgNoPermissions)
 	}

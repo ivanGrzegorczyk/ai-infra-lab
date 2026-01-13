@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driven/llm"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driven/session"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driven/storage"
 	httpHandler "github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driving/http"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/config"
@@ -26,7 +27,10 @@ func main() {
 		log.Fatalf("No se pudo cargar el repositorio de keys: %v", err)
 	}
 
-	chatService := services.NewChatService(ollamaClient, groqClient)
+	// Redis
+	sessionRepo := session.NewRedisSessionAdapter(cfg.RedisAddr)
+
+	chatService := services.NewChatService(ollamaClient, groqClient, sessionRepo)
 
 	// --- Adaptadores de Entrada ---
 	chatHandler := httpHandler.NewChatHandler(chatService)
