@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
+	"github.com/pkoukk/tiktoken-go"
 )
 
 // Constantes para nombres de proveedores y mensajes
@@ -52,7 +54,25 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 	// 2. Unir el historial con los nuevos mensajes del usuario
 	fullHistory = append(fullHistory, req.Messages...)
 
-	// Preparamos la request "aumentada" para los proveedores
+	const maxTokens = 200
+	const safetyMargin = 1000
+
+	if s.countTokens(fullHistory) > (maxTokens - safetyMargin) {
+		// Toma los mensajes del medio y los resume (deja el último del usuario afuera)
+		if len(fullHistory) > 3 {
+			toSummarize := fullHistory[:len(fullHistory)-1]
+			lastMessage := fullHistory[len(fullHistory)-1]
+
+			summary, err := s.summarizeHistory(ctx, toSummarize, keyConfig)
+			if err == nil {
+				// Reemplaza el pasado por el resumen + el último mensaje
+				fullHistory = []domain.ChatMessage{summary, lastMessage}
+				log.Println("Historial resumido exitosamente.")
+			}
+		}
+	}
+
+	// Prepara la request "aumentada" para los proveedores
 	providerReq := req
 	providerReq.Messages = fullHistory
 
@@ -212,4 +232,63 @@ func (s *chatService) streamFromProvider(ctx context.Context, req domain.ChatReq
 			return false, ctx.Err()
 		}
 	}
+}
+
+// countTokens estima el total de tokens en una lista de mensajes
+func (s *chatService) countTokens(messages []domain.ChatMessage) int {
+	tkm, err := tiktoken.GetEncoding("cl100k_base")
+	if err != nil {
+		return len(strings.Join(func() []string {
+			var s []string
+			for _, m := range messages {
+				s = append(s, m.Content)
+			}
+			return s
+		}(), " ")) / 4 // Fallback burdo: 4 caracteres aprox 1 token
+	}
+
+	count := 0
+	for _, msg := range messages {
+		count += len(tkm.Encode(msg.Content, nil, nil))
+		count += 4 // Overhead por mensaje
+	}
+	return count
+}
+
+// summarizeHistory toma los mensajes viejos y genera un resumen compacto
+func (s *chatService) summarizeHistory(ctx context.Context, history []domain.ChatMessage, keyConfig domain.APIKeyConfig) (domain.ChatMessage, error) {
+	log.Println("Contexto excedido. Generando resumen intermedio...")
+
+	promptResumen := "Resume la siguiente conversación de forma muy breve y técnica, manteniendo los datos clave: \n"
+	for _, msg := range history {
+		promptResumen += fmt.Sprintf("%s: %s\n", msg.Role, msg.Content)
+	}
+
+	// Usa un canal temporal para el resumen
+	tempChan := make(chan domain.ChatResponse)
+	summaryResult := ""
+
+	go func() {
+		for res := range tempChan {
+			summaryResult += res.Content
+		}
+	}()
+
+	// Uso groq el más rápido
+	reqResumen := domain.ChatRequest{
+		Messages: []domain.ChatMessage{{Role: "user", Content: promptResumen}},
+	}
+
+	// Llama directamente al provider externo (Groq)
+	_, err := s.streamFromProvider(ctx, reqResumen, s.external, tempChan)
+	close(tempChan)
+
+	if err != nil {
+		return domain.ChatMessage{}, err
+	}
+
+	return domain.ChatMessage{
+		Role:    "system",
+		Content: "Resumen de la charla anterior: " + summaryResult,
+	}, nil
 }
