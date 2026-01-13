@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
@@ -72,8 +73,12 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 		proxyChan := make(chan domain.ChatResponse)
 		var assistantResponseAccumulator string
 
+		var wg sync.WaitGroup
+		wg.Add(1)
+
 		// Goroutine para pasar del proxy al canal real y acumular el texto
 		go func() {
+			defer wg.Done()
 			for res := range proxyChan {
 				if res.Provider != ProviderInfoName {
 					assistantResponseAccumulator += res.Content
@@ -84,6 +89,7 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 
 		success, err := s.streamFromProvider(ctx, providerReq, provider, proxyChan)
 		close(proxyChan)
+		wg.Wait()
 
 		if success {
 			// 4. Guardar la conversación completa en Redis
