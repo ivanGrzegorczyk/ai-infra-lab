@@ -55,7 +55,7 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 	fullHistory = append(fullHistory, req.Messages...)
 
 	const maxTokens = 200
-	const safetyMargin = 1000
+	const safetyMargin = 50
 
 	if s.countTokens(fullHistory) > (maxTokens - safetyMargin) {
 		// Toma los mensajes del medio y los resume (deja el último del usuario afuera)
