@@ -1,66 +1,99 @@
-# AI Infrastructure Lab (AI-INFRA-LAB)
+# 🧪 AI Infra Lab
 
-This repository contains the Infrastructure-as-Code (IaC) and Kubernetes manifests required to deploy a scalable environment for Artificial Intelligence workloads. The stack is hosted on Oracle Cloud Infrastructure (OCI) using ARM64 architecture.
+[![Terraform](https://img.shields.io/badge/IaC-Terraform-purple.svg)](terraform/)
+[![Kubernetes](https://img.shields.io/badge/Orchestrator-K3s-blue.svg)](k8s/)
+[![Go](https://img.shields.io/badge/Backend-Go_1.25-00ADD8.svg)](apps/ai-gateway/)
+[![Status](https://img.shields.io/badge/Live-zyklab.me-green.svg)](https://chat.zyklab.me)
 
-## Core Infrastructure (Terraform)
+**AI Infra Lab** es un entorno de ingeniería de producción diseñado para desplegar, orquestar y escalar cargas de trabajo de Inteligencia Artificial. Este proyecto implementa una arquitectura híbrida (Edge/Cloud) sobre Kubernetes, gestionando todo el ciclo de vida desde la infraestructura como código (IaC) hasta la observabilidad avanzada.
 
-The foundation is provisioned using Terraform to ensure environment reproducibility. The setup leverages the OCI Always Free tier to deploy an Ampere A1 Compute instance.
+## 🚀 Live Demo
+* **AI Playground:** [https://zyklab.me](https://zyklab.me) - Interfaz de chat con memoria y soporte multi-modelo.
+* **Grafana Dashboards:** [https://grafana.zyklab.me](https://grafana.zyklab.me) - Monitoreo de tokens, latencia y recursos.
 
-* **Compute Resources:**
-    * **Architecture:** ARM64 Ampere (4 OCPUs).
-    * **Memory:** 24 GB RAM
-    * **Operating System:** Ubuntu 24.04 LTS.
-* **Networking:** 
-    * Virtual Cloud Network (VCN) with public subnets.
-    * Security Lists configured for ingress on ports 80 (HTTP) and 443 (HTTPS).
-    * DNS delegation managed via Cloudflare.
+---
 
-## Orchestration and Tooling
+## 🏗 Arquitectura del Sistema
 
-The cluster runs on K3s, a lightweight Kubernetes distribution.
+El sistema está construido sobre una instancia **ARM64 (Ampere A1)** en Oracle Cloud Infrastructure (OCI), aprovechando la eficiencia de la arquitectura ARM para ejecutar modelos de lenguaje.
 
-* **Kubectl:** The primary command-line tool for cluster interaction. It is used to apply manifests, inspect resource states, and troubleshoot services within the `ai-lab` and `monitoring` namespaces.
-* **Helm:** A package manager for Kubernetes used to deploy the `kube-prometheus-stack`. Helm simplifies the management of complex applications by grouping related resources into versioned charts.
-
-## Security and External Access
-
-External traffic and encryption are handled through a centralized Ingress controller and automated certificate management.
-
-* **ClusterIssuer:** A `cert-manager` resource configured with the ACME protocol to communicate with Let's Encrypt. It automates the issuance and renewal of SSL/TLS certificates using HTTP-01 challenges.
-* **Nginx Ingress Controller:** Manages external access to services. It handles TLS termination and routes traffic based on hostnames.
-* **Grafana Ingress:** Configured to expose the monitoring dashboard, integrating with the global ClusterIssuer for automated HTTPS.
-
-## Useful Commands
-
-### Infrastructure Management (Terraform)
-```bash
-terraform init
-terraform plan
-terraform apply
-terraform destroy
+```mermaid
+graph TD
+    Client[Client / Playground] -->|HTTPS| Ingress[Nginx Ingress]
+    
+    subgraph "K3s Cluster (OCI ARM64)"
+        Ingress --> Gateway[🤖 AI Gateway]
+        
+        Gateway -->|Route Local| Ollama[🦙 Ollama Service]
+        Gateway -->|Route Cloud| Groq[⚡ Groq Cloud API]
+        
+        Gateway <-->|Persist Context| Redis[(🔴 Redis Session Store)]
+        
+        Prometheus[📊 Prometheus] -->|Scrape| Gateway
+        Prometheus -->|Scrape| Ollama
+        Grafana -->|Query| Prometheus
+    end
+    
+    Terraform[Terraform IaC] -->|Provision| OCI[Oracle Cloud Infrastructure]
 ```
 
-### Cluster Operations (Kubectl)
+### Componentes Principales
+
+#### 1. [🤖 AI Gateway (Go)](apps/ai-gateway/)
+El núcleo inteligente del sistema. Un API Gateway desarrollado en Go siguiendo arquitectura hexagonal.
+* **Smart Routing:** Decide dinámicamente si usar Ollama (local) o Groq (cloud).
+* **Memory Management:** Mantiene el contexto de las conversaciones usando Redis.
+* **Safety & Resilience:** Implementa *Circuit Breakers*, *Safety Breaks* y *Summarization* automática de contexto.
+
+#### 2. [🦙 Ollama Service](services/ollama/)
+Despliegue contenerizado de Ollama optimizado para ARM64. Provee inferencia local privada para modelos como Llama 3 o Mistral.
+
+#### 3. [🧪 AI Playground](apps/playground/)
+Frontend ligero para interactuar con el Gateway. Soporta sesiones persistentes, streaming de tokens (SSE) y selección de proveedores.
+
+#### 4. [☁️ Infraestructura (Terraform)](terraform/)
+Definición declarativa de la infraestructura en OCI. Gestiona VCNs, Subnets, Security Lists y la instancia de cómputo Compute Ampere.
+
+---
+
+## 🛠 Stack Tecnológico
+
+| Capa | Tecnología | Uso |
+| :--- | :--- | :--- |
+| **Cloud** | Oracle Cloud (OCI) | Infraestructura física (ARM64). |
+| **IaC** | Terraform | Aprovisionamiento de recursos. |
+| **Orquestación** | K3s (Kubernetes) | Gestión de contenedores liviana. |
+| **Backend** | Go (Golang) | Lógica de negocio de alto rendimiento. |
+| **Inferencia** | Ollama / Groq | Motores de LLM Local y Cloud. |
+| **Base de Datos** | Redis | Almacenamiento de sesiones y caché. |
+| **Observabilidad** | Prometheus / Grafana | Métricas de negocio y sistema. |
+| **Ingress** | Nginx / Cert-Manager | Gestión de tráfico y SSL automático (Let's Encrypt). |
+
+---
+
+## 📂 Estructura del Repositorio
+
 ```bash
-# Check overall cluster health
-kubectl get all -A
-
-# Monitor certificate issuance status
-kubectl get certificate -n ai-lab
-
-# Inspect Ingress routing and assigned addresses
-kubectl describe ingress -n ai-lab
+.
+├── apps/
+│   ├── ai-gateway/    # Código fuente del Gateway en Go (Hexagonal Arch)
+│   └── playground/    # Frontend estático para pruebas de chat
+├── services/
+│   └── ollama/        # Manifiestos K8s para el motor de inferencia local
+├── terraform/         # Scripts de infraestructura OCI
+├── k8s/               # Recursos globales (Namespaces, Redis, Ingress, Certs)
+└── README.md          # Este archivo
 ```
 
-### Package Management (Helm)
-```bash
-# List all installed releases
-helm list -A
+## 🚦 Primeros Pasos
 
-# Update local chart repositories
-helm repo update
-```
+Para replicar esta infraestructura:
 
-## URLS
-* **Smoke Test Application:** [https://test.zyklab.me](https://test.zyklab.me)
-* **Grafana Dashboard:** [https://grafana.zyklab.me](https://grafana.zyklab.me)
+1.  **Infraestructura:** Ir a `terraform/` y ejecutar `terraform apply` para crear la VM en Oracle Cloud.
+2.  **Kubernetes:** Configurar `~/.kube/config` con el acceso al cluster K3s.
+3.  **Dependencias:** Desplegar Redis y Namespaces desde `k8s/`.
+4.  **Aplicaciones:** Desplegar el Gateway y Playground usando los manifiestos en `apps/`.
+
+---
+
+> **Autor:** Iván Grzegorczyk
