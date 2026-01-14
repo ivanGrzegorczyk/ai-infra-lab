@@ -5,6 +5,8 @@ metadata:
   namespace: ai-lab
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: ai-gateway
@@ -15,7 +17,7 @@ spec:
     spec:
       containers:
       - name: ai-gateway
-        image: ivangrz/ai-infra-gateway:1.0.15
+        image: ivangrz/ai-infra-gateway:1.1.1
         imagePullPolicy: Always
         ports:
         - containerPort: 8080

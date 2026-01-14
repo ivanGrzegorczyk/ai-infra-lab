@@ -204,12 +204,21 @@ func (s *chatService) streamFromProvider(ctx context.Context, req domain.ChatReq
 	})
 
 	const msPerChar = 20 * time.Millisecond
+	const maxTokensPerTurn = 1500
+	tokensInThisTurn := 0
 
 	for {
 		select {
 		case res, ok := <-providerResChan:
 			if !ok {
 				return true, nil // Stream completado exitosamente
+			}
+
+			// --- SAFETY BREAK (evita hallucination loops) ---
+			tokensInThisTurn++
+			if tokensInThisTurn > maxTokensPerTurn {
+				log.Printf("SAFETY BREAK: Proveedor %s excedió el límite de seguridad.", provider.GetName())
+				return true, nil // Corta el stream pero lo da como "exitoso" para no disparar fallbacks innecesarios
 			}
 
 			// Si el proveedor es Groq, aplica el delay por caracter para suavizar la lectura
