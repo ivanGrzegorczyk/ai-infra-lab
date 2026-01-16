@@ -54,10 +54,10 @@ spec:
           value: "2"
         resources:
           requests:
-            cpu: "3.5"
-            memory: "12Gi"
+            cpu: "500m" 
+            memory: "8Gi" 
           limits:
-            cpu: "4"
+            cpu: "4000m" 
             memory: "16Gi"
         volumeMounts:
         - name: ollama-storage
