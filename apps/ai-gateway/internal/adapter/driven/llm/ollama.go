@@ -9,7 +9,6 @@ import (
 	"net/http"
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
-	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
 )
 
 type ollamaClient struct {
@@ -17,7 +16,7 @@ type ollamaClient struct {
 	client  *http.Client
 }
 
-func NewOllamaClient(baseURL string) ports.LLMProvider {
+func NewOllamaClient(baseURL string) *ollamaClient {
 	return &ollamaClient{
 		baseURL: baseURL,
 		client:  &http.Client{},
