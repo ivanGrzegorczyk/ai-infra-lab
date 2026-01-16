@@ -9,6 +9,7 @@ type Config struct {
 	GroqAPIKey string
 	Port       string
 	RedisAddr  string
+	QdrantAddr string
 }
 
 func Load() *Config {
@@ -17,6 +18,7 @@ func Load() *Config {
 		GroqAPIKey: getEnv("GROQ_API_KEY", ""),
 		Port:       getEnv("PORT", "8080"),
 		RedisAddr:  getEnv("REDIS_ADDR", "redis-service.ai-lab:6379"),
+		QdrantAddr: getEnv("QDRANT_ADDR", "qdrant-service.ai-lab:6334"),
 	}
 }
 
