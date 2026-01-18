@@ -27,7 +27,10 @@ graph TD
         Gateway -->|Route Local| Ollama[🦙 Ollama Service]
         Gateway -->|Route Cloud| Groq[⚡ Groq Cloud API]
         
-        Gateway <-->|Persist Context| Redis[(🔴 Redis Session Store)]
+        Gateway <-->|Session Storage| Redis[(🔴 Redis)]
+        Gateway <-->|RAG: Ingest & Search| Qdrant[(🔍 Qdrant Vector DB)]
+        
+        Ollama -->|Generate Embeddings| Gateway
         
         Prometheus[📊 Prometheus] -->|Scrape| Gateway
         Prometheus -->|Scrape| Ollama
@@ -43,6 +46,7 @@ graph TD
 El núcleo inteligente del sistema. Un API Gateway desarrollado en Go siguiendo arquitectura hexagonal.
 * **Smart Routing:** Decide dinámicamente si usar Ollama (local) o Groq (cloud).
 * **Memory Management:** Mantiene el contexto de las conversaciones usando Redis.
+* **RAG (Retrieval-Augmented Generation):** Ingesta de documentos con vectorización automática y búsqueda semántica usando Qdrant.
 * **Safety & Resilience:** Implementa *Circuit Breakers*, *Safety Breaks* y *Summarization* automática de contexto.
 
 #### 2. [🦙 Ollama Service](services/ollama/)
@@ -65,7 +69,8 @@ Definición declarativa de la infraestructura en OCI. Gestiona VCNs, Subnets, Se
 | **Orquestación** | K3s (Kubernetes) | Gestión de contenedores liviana. |
 | **Backend** | Go (Golang) | Lógica de negocio de alto rendimiento. |
 | **Inferencia** | Ollama / Groq | Motores de LLM Local y Cloud. |
-| **Base de Datos** | Redis | Almacenamiento de sesiones y caché. |
+| **Vector Store** | Qdrant | Base de datos vectorial para RAG. |
+| **Base de Datos** | Redis | Almacenamiento de sesiones y jobs. |
 | **Observabilidad** | Prometheus / Grafana | Métricas de negocio y sistema. |
 | **Ingress** | Nginx / Cert-Manager | Gestión de tráfico y SSL automático (Let's Encrypt). |
 
@@ -78,10 +83,13 @@ Definición declarativa de la infraestructura en OCI. Gestiona VCNs, Subnets, Se
 ├── apps/
 │   ├── ai-gateway/    # Código fuente del Gateway en Go (Hexagonal Arch)
 │   └── playground/    # Frontend estático para pruebas de chat
-├── services/
-│   └── ollama/        # Manifiestos K8s para el motor de inferencia local
+├── k8s/
+│   ├── services/
+│   │   ├── ollama/    # Manifiestos K8s para el motor de inferencia local
+│   │   ├── qdrant/    # Base de datos vectorial para RAG
+│   │   └── redis/     # Cache y almacenamiento de sesiones
+│   └── ...            # Namespaces, Ingress, Certs
 ├── terraform/         # Scripts de infraestructura OCI
-├── k8s/               # Recursos globales (Namespaces, Redis, Ingress, Certs)
 └── README.md          # Este archivo
 ```
 

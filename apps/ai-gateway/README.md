@@ -11,10 +11,11 @@ El **AI Gateway** es el núcleo de la infraestructura de Inteligencia Artificial
 2. [Arquitectura y Flujo](#-arquitectura-y-flujo)
 3. [Configuración](#-configuración)
 4. [API Reference](#-api-reference)
-5. [Gestión de Memoria y Contexto](#-gestión-de-memoria-y-contexto)
-6. [Resiliencia y Safety Break](#-resiliencia-y-safety-break)
-7. [Observabilidad](#-observabilidad)
-8. [Despliegue y Desarrollo](#-despliegue-y-desarrollo)
+5. [RAG: Ingesta y Búsqueda Semántica](#-rag-ingesta-y-búsqueda-semántica)
+6. [Gestión de Memoria y Contexto](#-gestión-de-memoria-y-contexto)
+7. [Resiliencia y Safety Break](#-resiliencia-y-safety-break)
+8. [Observabilidad](#-observabilidad)
+9. [Despliegue y Desarrollo](#-despliegue-y-desarrollo)
 
 ---
 
@@ -22,6 +23,7 @@ El **AI Gateway** es el núcleo de la infraestructura de Inteligencia Artificial
 
 * **Hybrid AI Routing:** Enrutamiento dinámico entre **Ollama** (privacidad/local) y **Groq** (velocidad/nube). Si Ollama no está disponible, el sistema puede hacer fallback transparente o notificar al usuario.
 * **Session Memory (Redis):** Persistencia de conversaciones. El gateway "recuerda" el contexto de charlas pasadas mediante un `session_id` que vence tras 24 horas de inactividad.
+* **RAG (Retrieval-Augmented Generation):** Sistema completo de ingesta de documentos, vectorización automática con embeddings (nomic-embed-text) y búsqueda semántica en Qdrant para enriquecer las respuestas con conocimiento externo.
 * **Smart Summarization:** Gestión inteligente de la ventana de contexto. Si una conversación supera los **4096 tokens**, el sistema resume automáticamente los mensajes antiguos para mantener la coherencia sin romper el límite del modelo.
 * **Safety Break:** Disyuntor de emergencia que corta la generación si un modelo entra en un bucle infinito (> 1500 tokens por respuesta).
 * **Streaming Nativo:** Soporte total para **Server-Sent Events (SSE)**, entregando tokens en tiempo real con baja latencia.
@@ -52,6 +54,7 @@ El servicio se configura mediante variables de entorno y un archivo JSON para la
 | `OLLAMA_URL` | URL del servicio Ollama (interno o externo). | `http://localhost:11434` |
 | `GROQ_API_KEY` | API Key maestra para acceder a Groq Cloud. | `""` |
 | `REDIS_ADDR` | Dirección del servidor Redis para sesiones. | `redis-service.ai-lab:6379` |
+| `QDRANT_ADDR` | Dirección del servidor Qdrant para RAG. | `qdrant-service.ai-lab:6333` |
 
 ### Gestión de API Keys (`configs/keys.json`)
 El acceso al Gateway se controla mediante un archivo JSON que define las keys válidas y sus permisos.
@@ -134,6 +137,121 @@ curl -N -X POST http://localhost:8080/v1/chat \
     ]
   }'
 ```
+
+---
+
+## 🔍 RAG: Ingesta y Búsqueda Semántica
+
+El Gateway implementa un sistema completo de **Retrieval-Augmented Generation (RAG)** que permite alimentar a los modelos con conocimiento externo almacenado en documentos.
+
+### Flujo de Ingesta de Documentos
+
+1. **Recepción:** El endpoint `/v1/ingest` recibe texto plano (`.txt`, `.md`, `.json`).
+2. **Validación:** Se verifica que el contenido sea texto UTF-8 válido (rechaza binarios).
+3. **Job Asíncrono:** Se crea un job con estado `pending` y se guarda en Redis.
+4. **Chunking:** El texto se divide en fragmentos de ~500 caracteres con overlap de 50.
+5. **Vectorización:** Cada chunk se convierte en un embedding usando `nomic-embed-text` (768 dimensiones) vía Ollama.
+6. **Almacenamiento:** Los vectores se guardan en Qdrant con metadata (filename, chunk_index, job_id).
+7. **Finalización:** El job se marca como `completed` o `failed` según el resultado.
+
+### Flujo de Búsqueda (Durante el Chat)
+
+1. **Embedding de Query:** Cuando llega una pregunta del usuario, se genera su embedding.
+2. **Similarity Search:** Se buscan los Top 3 documentos más similares en Qdrant (score > 0.7).
+3. **Inyección de Contexto:** Los fragmentos relevantes se añaden como mensaje de sistema antes de enviar al LLM.
+4. **Generación Enriquecida:** El modelo responde con conocimiento del documento + su entrenamiento base.
+
+### Endpoints de RAG
+
+#### Ingestar Documento
+`POST /v1/ingest`
+
+**Headers:**
+* `Content-Type`: `application/json`
+* `X-API-Key`: `<tu-api-key>`
+
+**Body:**
+```json
+{
+  "content": "Texto completo del documento...",
+  "metadata": {
+    "filename": "manual.txt",
+    "author": "Ivan"
+  }
+}
+```
+
+**Respuesta (202 Accepted):**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "pending",
+  "created_at": "2026-01-18T10:30:00Z",
+  "metadata": { "filename": "manual.txt" }
+}
+```
+
+#### Consultar Estado del Job
+`GET /v1/ingest/status/{job_id}`
+
+**Headers:**
+* `X-API-Key`: `<tu-api-key>`
+
+**Respuesta:**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "message": "Procesados 25 chunks exitosamente",
+  "created_at": "2026-01-18T10:30:00Z"
+}
+```
+
+**Estados posibles:** `pending`, `processing`, `completed`, `failed`
+
+### Ejemplo Completo de Uso
+
+```bash
+# 1. Ingestar un documento
+curl -X POST http://localhost:8080/v1/ingest \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk-..." \
+  -d '{
+    "content": "Kubernetes es un sistema de orquestación de contenedores...",
+    "metadata": { "filename": "k8s-basics.txt" }
+  }'
+
+# Respuesta: {"id": "abc-123", "status": "pending", ...}
+
+# 2. Consultar estado (repetir hasta ver "completed")
+curl http://localhost:8080/v1/ingest/status/abc-123 \
+  -H "X-API-Key: sk-..."
+
+# 3. Hacer preguntas relacionadas al documento
+curl -N -X POST http://localhost:8080/v1/chat \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk-..." \
+  -d '{
+    "preferred_provider": "ollama",
+    "messages": [
+      { "role": "user", "content": "¿Qué es Kubernetes?" }
+    ]
+  }'
+```
+
+El sistema automáticamente recuperará los chunks relevantes del documento ingestado y los usará para responder.
+
+### Configuración del Sistema RAG
+
+| Parámetro | Valor | Ubicación |
+| :--- | :--- | :--- |
+| **Modelo de Embeddings** | `nomic-embed-text` | Ollama |
+| **Dimensionalidad** | 768 | `ingest_service.go:VectorSize` |
+| **Tamaño de Chunk** | 500 caracteres | `ingest_service.go:ChunkSize` |
+| **Overlap** | 50 caracteres | `ingest_service.go:ChunkOverlap` |
+| **Top-K Retrieval** | 3 documentos | `chat_service.go:retrieveContext` |
+| **Umbral de Relevancia** | Score > 0.7 | `chat_service.go` |
+| **Colección Qdrant** | `knowledge_base` | `ingest_service.go:CollectionName` |
 
 ---
 
