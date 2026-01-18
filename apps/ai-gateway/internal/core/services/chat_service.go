@@ -65,12 +65,12 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 
 		docs, err := s.retrieveContext(ctx, lastUserMsg)
 		if err != nil {
-			log.Printf("⚠️ RAG Error: %v", err)
+			log.Printf("RAG Error: %v", err)
 		} else if len(docs) > 0 {
-			log.Printf("✅ RAG: Se encontraron %d documentos relevantes.", len(docs))
+			log.Printf("RAG: Se encontraron %d documentos relevantes.", len(docs))
 			contextBlock = s.formatContext(docs)
 		} else {
-			log.Printf("📭 RAG: No se encontró contexto suficiente.")
+			log.Printf("RAG: No se encontró contexto suficiente.")
 		}
 	}
 
@@ -157,15 +157,13 @@ Si la respuesta no se encuentra en el contexto, di "No tengo información sobre 
 	return fmt.Errorf(MsgAllProvidersFailed, lastErr)
 }
 
-// --- MÉTODOS PRIVADOS NUEVOS (RAG) ---
-
 func (s *chatService) retrieveContext(ctx context.Context, query string) ([]domain.VectorDocument, error) {
 	vector, err := s.embedder.GenerateEmbedding(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("error generando embedding: %w", err)
 	}
 
-	// Buscamos Top 3 en la colección knowledge_base
+	// Busca Top 3 en la colección knowledge_base
 	results, err := s.vectorStore.Search(ctx, "knowledge_base", vector, 3)
 	if err != nil {
 		return nil, fmt.Errorf("error buscando en vector store: %w", err)
@@ -173,7 +171,6 @@ func (s *chatService) retrieveContext(ctx context.Context, query string) ([]doma
 
 	var relevantDocs []domain.VectorDocument
 	for _, res := range results {
-		// Log para ajustar umbral. Bajamos a 0.25 para ser más permisivos.
 		log.Printf("   -> RAG Match: Score %.4f", res.Score)
 		if res.Score > 0.25 {
 			relevantDocs = append(relevantDocs, res.Document)
