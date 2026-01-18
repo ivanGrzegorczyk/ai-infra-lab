@@ -53,7 +53,7 @@ func main() {
 	// 3. Inicializar Servicios (Core)
 	// ---------------------------------------------------------
 
-	chatService := services.NewChatService(ollamaClient, groqClient, sessionRepo)
+	chatService := services.NewChatService(ollamaClient, groqClient, sessionRepo, ollamaClient, qdrantAdapter)
 	ingestService := services.NewIngestService(jobRepo, ollamaClient, qdrantAdapter)
 
 	// ---------------------------------------------------------

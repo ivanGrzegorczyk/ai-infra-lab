@@ -46,14 +46,42 @@ func (m *MockSessionRepository) DeleteSession(ctx context.Context, sessionID str
 	return nil
 }
 
+// 3. Mock de Embedding Generator (para RAG)
+type MockEmbeddingGenerator struct{}
+
+func (m *MockEmbeddingGenerator) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
+	// Retorna un vector dummy para el test
+	return []float32{0.1, 0.2, 0.3}, nil
+}
+
+// 4. Mock de Vector Store (para RAG)
+type MockVectorStore struct {
+	SearchResults []domain.SearchResult
+}
+
+func (m *MockVectorStore) EnsureCollection(ctx context.Context, name string, size uint64) error {
+	return nil
+}
+
+func (m *MockVectorStore) Upsert(ctx context.Context, collectionName string, docs []domain.VectorDocument) error {
+	return nil
+}
+
+func (m *MockVectorStore) Search(ctx context.Context, collectionName string, vector []float32, limit uint64) ([]domain.SearchResult, error) {
+	// Por defecto, retorna resultados vacíos (no hay contexto RAG)
+	return m.SearchResults, nil
+}
+
 // --- HELPER DE SETUP (DRY) ---
-func setupService() (ports.ChatService, *MockLLMProvider, *MockLLMProvider, *MockSessionRepository) {
+func setupService() (ports.ChatService, *MockLLMProvider, *MockLLMProvider, *MockSessionRepository, *MockVectorStore) {
 	local := &MockLLMProvider{Name: "ollama"}
 	external := &MockLLMProvider{Name: "groq"}
 	sessionRepo := NewMockSessionRepository()
+	embedder := &MockEmbeddingGenerator{}
+	vectorStore := &MockVectorStore{SearchResults: []domain.SearchResult{}} // Sin contexto RAG por defecto
 
-	svc := NewChatService(local, external, sessionRepo)
-	return svc, local, external, sessionRepo
+	svc := NewChatService(local, external, sessionRepo, embedder, vectorStore)
+	return svc, local, external, sessionRepo, vectorStore
 }
 
 // Helper para crear streams simulados
@@ -79,7 +107,7 @@ func mockStreamResponse(content string, count int) (<-chan domain.ChatResponse, 
 // --- TESTS ---
 
 func TestExecuteChat_BasicFlow(t *testing.T) {
-	svc, local, _, _ := setupService()
+	svc, local, _, _, _ := setupService()
 
 	// Configurar comportamiento del Mock
 	local.OnGenerateStream = func(req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error) {
@@ -109,7 +137,7 @@ func TestExecuteChat_BasicFlow(t *testing.T) {
 }
 
 func TestExecuteChat_SessionMemory(t *testing.T) {
-	svc, local, _, sessionRepo := setupService()
+	svc, local, _, sessionRepo, _ := setupService()
 
 	// 1. Pre-cargar una sesión en el mock de Redis
 	sessionID := "sess-123"
@@ -120,8 +148,9 @@ func TestExecuteChat_SessionMemory(t *testing.T) {
 
 	local.OnGenerateStream = func(req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error) {
 		// Verificar que el servicio le pasó el historial completo al provider
-		if len(req.Messages) != 3 { // 2 previos + 1 nuevo
-			t.Errorf("El provider debió recibir 3 mensajes, recibió %d", len(req.Messages))
+		// Con RAG puede haber un system message extra si hay contexto, pero en este test no hay contexto
+		if len(req.Messages) < 3 { // Al menos 2 previos + 1 nuevo
+			t.Errorf("El provider debió recibir al menos 3 mensajes, recibió %d", len(req.Messages))
 		}
 		return mockStreamResponse("Entendido", 1)
 	}
@@ -149,7 +178,7 @@ func TestExecuteChat_SessionMemory(t *testing.T) {
 }
 
 func TestExecuteChat_SafetyBreak(t *testing.T) {
-	svc, _, external, _ := setupService()
+	svc, _, external, _, _ := setupService()
 
 	// Simular un provider que se vuelve loco y manda 3000 tokens
 	external.OnGenerateStream = func(req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error) {

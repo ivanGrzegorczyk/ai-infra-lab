@@ -13,11 +13,9 @@ import (
 	"github.com/pkoukk/tiktoken-go"
 )
 
-// Constantes para nombres de proveedores y mensajes
 const (
-	ProviderGroq   = "groq"
-	ProviderOllama = "ollama"
-
+	ProviderGroq     = "groq"
+	ProviderOllama   = "ollama"
 	ProviderInfoName = "gateway-info"
 
 	MsgNoPermissions      = "tu API Key no tiene permisos para ningún proveedor de IA"
@@ -27,23 +25,27 @@ const (
 )
 
 type chatService struct {
-	local    ports.LLMProvider // Ollama
-	external ports.LLMProvider // Groq
-	sessions ports.SessionRepository
+	local       ports.LLMProvider
+	external    ports.LLMProvider
+	sessions    ports.SessionRepository
+	embedder    ports.EmbeddingGenerator
+	vectorStore ports.VectorStore
 }
 
-func NewChatService(local, external ports.LLMProvider, sessions ports.SessionRepository) ports.ChatService {
+func NewChatService(local, external ports.LLMProvider, sessions ports.SessionRepository, embedder ports.EmbeddingGenerator, store ports.VectorStore) ports.ChatService {
 	return &chatService{
-		local:    local,
-		external: external,
-		sessions: sessions,
+		local:       local,
+		external:    external,
+		sessions:    sessions,
+		embedder:    embedder,
+		vectorStore: store,
 	}
 }
 
 func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, keyConfig domain.APIKeyConfig, resChan chan domain.ChatResponse) error {
 	var fullHistory []domain.ChatMessage
 
-	// 1. Recuperar historial si hay session_id
+	// 1. Recuperar historial
 	if req.SessionID != "" {
 		history, err := s.sessions.GetHistory(ctx, req.SessionID)
 		if err == nil && len(history) > 0 {
@@ -51,30 +53,58 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 		}
 	}
 
-	// 2. Unir el historial con los nuevos mensajes del usuario
-	fullHistory = append(fullHistory, req.Messages...)
+	// 2. Lógica RAG (Retrieval)
+	lastUserMsg := ""
+	if len(req.Messages) > 0 {
+		lastUserMsg = req.Messages[len(req.Messages)-1].Content
+	}
 
-	const maxTokens = 4096
-	const safetyMargin = 1000
+	contextBlock := ""
+	if lastUserMsg != "" {
+		log.Printf("🔎 RAG: Buscando contexto para query: '%s'", lastUserMsg)
 
-	if s.countTokens(fullHistory) > (maxTokens - safetyMargin) {
-		// Toma los mensajes del medio y los resume (deja el último del usuario afuera)
-		if len(fullHistory) > 3 {
-			toSummarize := fullHistory[:len(fullHistory)-1]
-			lastMessage := fullHistory[len(fullHistory)-1]
-
-			summary, err := s.summarizeHistory(ctx, toSummarize, keyConfig)
-			if err == nil {
-				// Reemplaza el pasado por el resumen + el último mensaje
-				fullHistory = []domain.ChatMessage{summary, lastMessage}
-				log.Printf("Sesión %s resumida exitosamente.", req.SessionID)
-			}
+		docs, err := s.retrieveContext(ctx, lastUserMsg)
+		if err != nil {
+			log.Printf("⚠️ RAG Error: %v", err)
+		} else if len(docs) > 0 {
+			log.Printf("✅ RAG: Se encontraron %d documentos relevantes.", len(docs))
+			contextBlock = s.formatContext(docs)
+		} else {
+			log.Printf("📭 RAG: No se encontró contexto suficiente.")
 		}
 	}
 
-	// Prepara la request "aumentada" para los proveedores
+	// 3. Preparar mensajes para inferencia
+	var messagesForInference []domain.ChatMessage
+
+	if contextBlock != "" {
+		// Inyectamos el contexto como un System Prompt temporal
+		systemMsg := domain.ChatMessage{
+			Role: "system",
+			Content: fmt.Sprintf(`Eres un asistente experto. Utiliza el siguiente contexto recuperado para responder la pregunta del usuario.
+Si la respuesta no se encuentra en el contexto, di "No tengo información sobre eso en mis documentos".
+
+--- CONTEXTO ---
+%s
+----------------
+`, contextBlock),
+		}
+		messagesForInference = append(messagesForInference, systemMsg)
+	}
+
+	messagesForInference = append(messagesForInference, fullHistory...)
+	messagesForInference = append(messagesForInference, req.Messages...)
+
+	// Validación básica de tokens
+	if s.countTokens(messagesForInference) > (4096 - 1000) {
+		if len(fullHistory) > 2 {
+			log.Println("Contexto muy largo, recortando historial antiguo...")
+			messagesForInference = messagesForInference[len(messagesForInference)/2:]
+		}
+	}
+
 	providerReq := req
-	providerReq.Messages = fullHistory
+	providerReq.Messages = messagesForInference
 
 	providers := s.selectProviders(req.PreferredProvider, keyConfig)
 	if len(providers) == 0 {
@@ -87,16 +117,11 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 			s.sendProviderSwitchNotification(resChan)
 		}
 
-		// 3. Captura del stream para Redis
-		// Usamos un canal intermedio para "espiar" lo que dice la IA
-		// y poder guardarlo en el historial al terminar.
 		proxyChan := make(chan domain.ChatResponse)
 		var assistantResponseAccumulator string
-
 		var wg sync.WaitGroup
 		wg.Add(1)
 
-		// Goroutine para pasar del proxy al canal real y acumular el texto
 		go func() {
 			defer wg.Done()
 			for res := range proxyChan {
@@ -112,12 +137,14 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 		wg.Wait()
 
 		if success {
-			// 4. Guardar la conversación completa en Redis
+			// Guardar en Redis solo la interacción limpia (sin el bloque de contexto gigante)
 			if req.SessionID != "" {
-				fullHistory = append(fullHistory, domain.ChatMessage{
-					Role:    "assistant",
-					Content: assistantResponseAccumulator,
-				})
+				userMsg := req.Messages[len(req.Messages)-1]
+				newExchange := []domain.ChatMessage{
+					userMsg,
+					{Role: "assistant", Content: assistantResponseAccumulator},
+				}
+				fullHistory = append(fullHistory, newExchange...)
 				_ = s.sessions.SaveHistory(ctx, req.SessionID, fullHistory)
 			}
 			return nil
@@ -128,6 +155,43 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 	}
 
 	return fmt.Errorf(MsgAllProvidersFailed, lastErr)
+}
+
+// --- MÉTODOS PRIVADOS NUEVOS (RAG) ---
+
+func (s *chatService) retrieveContext(ctx context.Context, query string) ([]domain.VectorDocument, error) {
+	vector, err := s.embedder.GenerateEmbedding(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("error generando embedding: %w", err)
+	}
+
+	// Buscamos Top 3 en la colección knowledge_base
+	results, err := s.vectorStore.Search(ctx, "knowledge_base", vector, 3)
+	if err != nil {
+		return nil, fmt.Errorf("error buscando en vector store: %w", err)
+	}
+
+	var relevantDocs []domain.VectorDocument
+	for _, res := range results {
+		// Log para ajustar umbral. Bajamos a 0.25 para ser más permisivos.
+		log.Printf("   -> RAG Match: Score %.4f", res.Score)
+		if res.Score > 0.25 {
+			relevantDocs = append(relevantDocs, res.Document)
+		}
+	}
+	return relevantDocs, nil
+}
+
+func (s *chatService) formatContext(docs []domain.VectorDocument) string {
+	var sb strings.Builder
+	for _, doc := range docs {
+		source := "doc"
+		if val, ok := doc.Metadata["filename"]; ok {
+			source = fmt.Sprintf("%v", val)
+		}
+		sb.WriteString(fmt.Sprintf("[Fuente: %s]: %s\n\n", source, doc.Content))
+	}
+	return sb.String()
 }
 
 // selectProviders devuelve la lista de proveedores en orden de prioridad según preferencias y permisos
@@ -165,27 +229,6 @@ func (s *chatService) addProviderIfAllowed(providers []ports.LLMProvider, provid
 		return append(providers, provider)
 	}
 	return providers
-}
-
-// executeWithFallback intenta los proveedores en orden hasta que uno tenga éxito
-func (s *chatService) executeWithFallback(ctx context.Context, req domain.ChatRequest, providers []ports.LLMProvider, resChan chan domain.ChatResponse) error {
-	var lastErr error
-
-	for i, provider := range providers {
-		if i > 0 {
-			s.sendProviderSwitchNotification(resChan)
-		}
-
-		success, err := s.streamFromProvider(ctx, req, provider, resChan)
-		if success {
-			return nil
-		}
-
-		lastErr = err
-		log.Printf(MsgProviderError, provider.GetName(), err)
-	}
-
-	return fmt.Errorf(MsgAllProvidersFailed, lastErr)
 }
 
 // sendProviderSwitchNotification envía un mensaje de notificación sobre el cambio de proveedor
@@ -265,7 +308,7 @@ func (s *chatService) countTokens(messages []domain.ChatMessage) int {
 }
 
 // summarizeHistory toma los mensajes viejos y genera un resumen compacto
-func (s *chatService) summarizeHistory(ctx context.Context, history []domain.ChatMessage, keyConfig domain.APIKeyConfig) (domain.ChatMessage, error) {
+func (s *chatService) summarizeHistory(ctx context.Context, history []domain.ChatMessage) (domain.ChatMessage, error) {
 	log.Println("Contexto excedido. Generando resumen intermedio...")
 
 	promptResumen := "Resume la siguiente conversación de forma muy breve y técnica, manteniendo los datos clave: \n"

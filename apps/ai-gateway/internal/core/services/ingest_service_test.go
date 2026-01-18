@@ -52,33 +52,33 @@ func (m *MockEmbedder) GenerateEmbedding(ctx context.Context, text string) ([]fl
 	return []float32{0.1, 0.2, 0.3}, nil
 }
 
-// 3. Mock Vector Store
-type MockVectorStore struct {
+// 3. Mock Vector Store (para Ingest)
+type MockVectorStoreForIngest struct {
 	UpsertedDocs []domain.VectorDocument
 	Fail         bool
 }
 
-func (m *MockVectorStore) EnsureCollection(ctx context.Context, name string, size uint64) error {
+func (m *MockVectorStoreForIngest) EnsureCollection(ctx context.Context, name string, size uint64) error {
 	return nil
 }
 
-func (m *MockVectorStore) Upsert(ctx context.Context, collectionName string, docs []domain.VectorDocument) error {
+func (m *MockVectorStoreForIngest) Upsert(ctx context.Context, collectionName string, docs []domain.VectorDocument) error {
 	if m.Fail {
 		return errors.New("qdrant error simulado")
 	}
 	m.UpsertedDocs = append(m.UpsertedDocs, docs...)
 	return nil
 }
-func (m *MockVectorStore) Search(ctx context.Context, collectionName string, vector []float32, limit uint64) ([]domain.SearchResult, error) {
+func (m *MockVectorStoreForIngest) Search(ctx context.Context, collectionName string, vector []float32, limit uint64) ([]domain.SearchResult, error) {
 	return nil, nil
 }
 
 // --- TEST SETUP ---
 
-func setupIngest() (*IngestService, *MockJobRepo, *MockEmbedder, *MockVectorStore) {
+func setupIngest() (*IngestService, *MockJobRepo, *MockEmbedder, *MockVectorStoreForIngest) {
 	jobRepo := NewMockJobRepo()
 	embedder := &MockEmbedder{}
-	vectorStore := &MockVectorStore{}
+	vectorStore := &MockVectorStoreForIngest{}
 
 	svc := NewIngestService(jobRepo, embedder, vectorStore)
 	return svc, jobRepo, embedder, vectorStore
