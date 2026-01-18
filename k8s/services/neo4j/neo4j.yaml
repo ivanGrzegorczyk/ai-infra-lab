@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j-service
+  namespace: ai-lab
+spec:
+  ports:
+    - port: 7474
+      name: http
+      targetPort: 7474
+    - port: 7687
+      name: bolt
+      targetPort: 7687
+  selector:
+    app: neo4j
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: neo4j
+  namespace: ai-lab
+spec:
+  serviceName: "neo4j-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: neo4j
+  template:
+    metadata:
+      labels:
+        app: neo4j
+    spec:
+      initContainers:
+        - name: fix-permissions
+          image: busybox
+          command: ["sh", "-c", "chown -R 7474:7474 /data"]
+          volumeMounts:
+            - name: neo4j-data
+              mountPath: /data
+      containers:
+        - name: neo4j
+          image: neo4j:5.15.0-community
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          ports:
+            - containerPort: 7474
+              name: http
+            - containerPort: 7687
+              name: bolt
+          env:
+            - name: NEO4J_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: neo4j-credentials
+                  key: auth
+            - name: NEO4J_server_memory_pagecache_size
+              value: "200M"
+            - name: NEO4J_server_memory_heap_initial__size
+              value: "200M"
+            - name: NEO4J_server_memory_heap_max__size
+              value: "400M"
+            - name: NEO4J_server_config_strict__validation_enabled
+              value: "false"
+          volumeMounts:
+            - name: neo4j-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: neo4j-data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 2Gi
