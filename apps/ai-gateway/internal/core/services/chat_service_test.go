@@ -207,3 +207,211 @@ func TestExecuteChat_SafetyBreak(t *testing.T) {
 		fmt.Printf("Safety Break funcionó correctamente: cortó en %d tokens\n", tokenCount)
 	}
 }
+
+// --- TESTS RAG ---
+
+// Test 4: Verificar que RAG inyecta contexto cuando encuentra documentos relevantes
+func TestExecuteChat_RAGWithContext(t *testing.T) {
+	svc, local, _, _, vectorStore := setupService()
+
+	// Configurar el VectorStore para retornar documentos relevantes
+	vectorStore.SearchResults = []domain.SearchResult{
+		{
+			Score: 0.85, // Score alto = relevante
+			Document: domain.VectorDocument{
+				ID:      "doc-1",
+				Content: "Go es un lenguaje de programación creado por Google en 2009.",
+				Metadata: map[string]interface{}{
+					"filename": "golang-intro.txt",
+				},
+			},
+		},
+		{
+			Score: 0.72,
+			Document: domain.VectorDocument{
+				ID:      "doc-2",
+				Content: "Go es conocido por su simplicidad y eficiencia en concurrencia.",
+				Metadata: map[string]interface{}{
+					"filename": "golang-features.txt",
+				},
+			},
+		},
+	}
+
+	// Variable para capturar los mensajes que recibe el provider
+	var capturedMessages []domain.ChatMessage
+
+	local.OnGenerateStream = func(req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error) {
+		capturedMessages = req.Messages
+
+		// 1. Verificar que hay un system message al inicio
+		if len(req.Messages) == 0 || req.Messages[0].Role != "system" {
+			t.Error("RAG debería inyectar un mensaje de sistema al inicio cuando hay contexto")
+		}
+
+		// 2. Verificar que el contenido del system message incluye el contexto
+		systemContent := req.Messages[0].Content
+		if !containsSubstring(systemContent, "golang-intro.txt") {
+			t.Error("El system prompt debería incluir la fuente del documento")
+		}
+		if !containsSubstring(systemContent, "Go es un lenguaje de programación") {
+			t.Error("El system prompt debería incluir el contenido del documento")
+		}
+
+		// 3. Verificar que el mensaje del usuario está presente
+		userMsgFound := false
+		for _, msg := range req.Messages {
+			if msg.Role == "user" && msg.Content == "¿Qué es Go?" {
+				userMsgFound = true
+				break
+			}
+		}
+		if !userMsgFound {
+			t.Error("El mensaje del usuario debería estar presente en los mensajes enviados al provider")
+		}
+
+		return mockStreamResponse("Go es un lenguaje de Google", 1)
+	}
+
+	resChan := make(chan domain.ChatResponse)
+	go func() {
+		defer close(resChan)
+		req := domain.ChatRequest{
+			Messages: []domain.ChatMessage{{Role: "user", Content: "¿Qué es Go?"}},
+		}
+		cfg := domain.APIKeyConfig{AllowedProviders: []string{"ollama"}}
+		_ = svc.ExecuteChat(context.Background(), req, cfg, resChan)
+	}()
+
+	// Consumir respuesta
+	for range resChan {
+	}
+
+	// 4. Validación adicional: el primer mensaje debe ser system
+	if len(capturedMessages) == 0 {
+		t.Fatal("No se capturaron mensajes")
+	}
+	if capturedMessages[0].Role != "system" {
+		t.Errorf("El primer mensaje debería ser 'system', es '%s'", capturedMessages[0].Role)
+	}
+}
+
+// Test 5: Verificar que RAG NO inyecta contexto cuando NO encuentra documentos relevantes (scores bajos)
+func TestExecuteChat_RAGWithoutContext(t *testing.T) {
+	svc, local, _, _, vectorStore := setupService()
+
+	// Configurar VectorStore con documentos de score bajo (< 0.25)
+	vectorStore.SearchResults = []domain.SearchResult{
+		{
+			Score: 0.15, // Score bajo = no relevante
+			Document: domain.VectorDocument{
+				ID:      "doc-irrelevant",
+				Content: "Contenido irrelevante",
+			},
+		},
+	}
+
+	var capturedMessages []domain.ChatMessage
+
+	local.OnGenerateStream = func(req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error) {
+		capturedMessages = req.Messages
+
+		// Verificar que NO hay system message (o si hay, no es de RAG)
+		if len(req.Messages) > 0 && req.Messages[0].Role == "system" {
+			systemContent := req.Messages[0].Content
+			if containsSubstring(systemContent, "CONTEXTO") {
+				t.Error("RAG NO debería inyectar contexto cuando los scores son bajos")
+			}
+		}
+
+		return mockStreamResponse("No tengo información", 1)
+	}
+
+	resChan := make(chan domain.ChatResponse)
+	go func() {
+		defer close(resChan)
+		req := domain.ChatRequest{
+			Messages: []domain.ChatMessage{{Role: "user", Content: "¿Qué es XYZ?"}},
+		}
+		cfg := domain.APIKeyConfig{AllowedProviders: []string{"ollama"}}
+		_ = svc.ExecuteChat(context.Background(), req, cfg, resChan)
+	}()
+
+	for range resChan {
+	}
+
+	// Validar que no hay system message de RAG
+	if len(capturedMessages) > 0 && capturedMessages[0].Role == "system" {
+		if containsSubstring(capturedMessages[0].Content, "--- CONTEXTO ---") {
+			t.Error("No debería haber contexto RAG cuando los documentos tienen score bajo")
+		}
+	}
+}
+
+// Test 6: Verificar manejo de errores en RAG (embedder falla, pero el chat continúa)
+func TestExecuteChat_RAGErrorHandling(t *testing.T) {
+	// En este caso, creamos un setup custom con un embedder que falla
+	local := &MockLLMProvider{Name: "ollama"}
+	external := &MockLLMProvider{Name: "groq"}
+	sessionRepo := NewMockSessionRepository()
+	vectorStore := &MockVectorStore{SearchResults: []domain.SearchResult{}}
+
+	// Mock de embedder que falla
+	failingEmbedder := &MockFailingEmbedder{}
+
+	svc := NewChatService(local, external, sessionRepo, failingEmbedder, vectorStore)
+
+	local.OnGenerateStream = func(req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error) {
+		// El chat debería continuar normalmente aunque el RAG falle
+		return mockStreamResponse("Respuesta sin contexto", 1)
+	}
+
+	resChan := make(chan domain.ChatResponse)
+	var chatError error
+
+	go func() {
+		defer close(resChan)
+		req := domain.ChatRequest{
+			Messages: []domain.ChatMessage{{Role: "user", Content: "Hola"}},
+		}
+		cfg := domain.APIKeyConfig{AllowedProviders: []string{"ollama"}}
+		chatError = svc.ExecuteChat(context.Background(), req, cfg, resChan)
+	}()
+
+	// Consumir respuesta
+	received := ""
+	for res := range resChan {
+		received += res.Content
+	}
+
+	// El chat debe completarse exitosamente aunque RAG falle
+	if chatError != nil {
+		t.Errorf("El chat no debería fallar cuando RAG tiene error: %v", chatError)
+	}
+	if received != "Respuesta sin contexto" {
+		t.Errorf("Debería recibir respuesta normal, recibió: '%s'", received)
+	}
+}
+
+// --- HELPER MOCKS ADICIONALES ---
+
+// Mock de embedder que siempre falla (para test de error handling)
+type MockFailingEmbedder struct{}
+
+func (m *MockFailingEmbedder) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
+	return nil, fmt.Errorf("error simulado de embedder")
+}
+
+// Helper para buscar substring (case-insensitive sería mejor, pero esto es suficiente)
+func containsSubstring(text, substr string) bool {
+	return len(text) >= len(substr) && (text == substr || len(text) > len(substr) && stringContains(text, substr))
+}
+
+func stringContains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
