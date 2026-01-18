@@ -41,13 +41,13 @@ func (h *IngestHandler) HandleIngest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *IngestHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
-	// Extraer ID de la URL (asumimos /v1/ingest/{id})
+	// Extraer ID de la URL (formato: /v1/ingest/status/{id})
 	pathParts := strings.Split(r.URL.Path, "/")
-	if len(pathParts) < 4 {
+	if len(pathParts) < 5 {
 		http.Error(w, "Invalid Job ID", http.StatusBadRequest)
 		return
 	}
-	jobID := pathParts[3]
+	jobID := pathParts[4]
 
 	job, err := h.service.GetJobStatus(r.Context(), jobID)
 	if err != nil {
