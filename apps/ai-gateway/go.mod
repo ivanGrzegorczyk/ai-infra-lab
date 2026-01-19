@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/prometheus/client_golang v1.23.2
 	github.com/qdrant/go-client v1.7.0

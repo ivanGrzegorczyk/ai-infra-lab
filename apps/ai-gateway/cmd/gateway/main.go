@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driven/graph"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driven/llm"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driven/session"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/adapter/driven/storage"
@@ -44,6 +45,13 @@ func main() {
 		log.Fatalf("Error conectando a Qdrant: %v", err)
 	}
 	defer qdrantAdapter.Close()
+
+	// Neo4j - Graph Database
+	neo4jAdapter, err := graph.NewNeo4jAdapter(cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword)
+	if err != nil {
+		log.Fatalf("Error conectando a Neo4j: %v", err)
+	}
+	defer neo4jAdapter.Close()
 
 	// LLM Clients
 	ollamaClient := llm.NewOllamaClient(cfg.OllamaURL)
@@ -97,7 +105,7 @@ func main() {
 
 	serverAddr := ":" + cfg.Port
 	fmt.Printf("AI Gateway iniciado en %s\n", serverAddr)
-	fmt.Printf("Configuracion: Ollama (%s) | Qdrant (%s)\n", cfg.OllamaURL, cfg.QdrantAddr)
+	fmt.Printf("Configuracion: Ollama (%s) | Qdrant (%s) | Neo4j (%s)\n", cfg.OllamaURL, cfg.QdrantAddr, cfg.Neo4jURI)
 
 	if err := http.ListenAndServe(serverAddr, mux); err != nil {
 		log.Fatalf("Fallo en el servidor: %v", err)
