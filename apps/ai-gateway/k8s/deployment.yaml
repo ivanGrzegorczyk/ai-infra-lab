@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: ai-gateway
-        image: ivangrz/ai-infra-gateway:1.1.6
+        image: ivangrz/ai-infra-gateway:1.1.7
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
@@ -31,6 +31,13 @@ spec:
             secretKeyRef:
               name: ai-gateway-secrets
               key: GROQ_API_KEY
+        - name: NEO4J_URI
+          value: "bolt://neo4j-service.ai-lab.svc.cluster.local:7687"
+        - name: NEO4J_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: neo4j-credentials
+              key: auth
         resources:
           limits:
             memory: "128Mi"
