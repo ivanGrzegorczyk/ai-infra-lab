@@ -18,9 +18,9 @@ const (
 	ProviderOllama   = "ollama"
 	ProviderInfoName = "gateway-info"
 
-	MsgNoPermissions      = "tu API Key no tiene permisos para ningún proveedor de IA"
-	MsgSwitchingProvider  = "⚠️ Cambiando de proveedor debido a un error..."
-	MsgAllProvidersFailed = "todos los proveedores fallaron. Último error: %v"
+	MsgNoPermissions      = "tu API Key no tiene permisos para ningun proveedor de IA"
+	MsgSwitchingProvider  = "Cambiando de proveedor debido a un error..."
+	MsgAllProvidersFailed = "todos los proveedores fallaron. Ultimo error: %v"
 	MsgProviderError      = "Error con proveedor %s: %v. Intentando fallback..."
 )
 
@@ -61,7 +61,7 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 
 	contextBlock := ""
 	if lastUserMsg != "" {
-		log.Printf("🔎 RAG: Buscando contexto para query: '%s'", lastUserMsg)
+		log.Printf("RAG: Busca contexto para query: '%s'", lastUserMsg)
 
 		docs, err := s.retrieveContext(ctx, lastUserMsg)
 		if err != nil {
@@ -70,7 +70,7 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 			log.Printf("RAG: Se encontraron %d documentos relevantes.", len(docs))
 			contextBlock = s.formatContext(docs)
 		} else {
-			log.Printf("RAG: No se encontró contexto suficiente.")
+			log.Printf("RAG: No se encontro contexto suficiente.")
 		}
 	}
 

@@ -131,8 +131,8 @@ func (s *IngestService) processJob(ctx context.Context, job domain.IngestJob, co
 			log.Printf("[Job %s] Extrayendo grafo del chunk %d...", job.ID, i)
 			n, r, err := s.extractAndSaveGraph(ctx, chunkText)
 			if err != nil {
-				// No fallamos todo el job si el grafo falla, solo logueamos (Soft Fail)
-				log.Printf("⚠️ Error GraphRAG en chunk %d: %v", i, err)
+				// No falla todo el job si el grafo falla, solo loguea (Soft Fail)
+				log.Printf("[Job %s] Error en GraphRAG chunk %d: %v", job.ID, i, err)
 			} else {
 				nodesCount += n
 				relsCount += r
@@ -225,13 +225,16 @@ DoneReading:
 			label = "Concept"
 		}
 
-		query := fmt.Sprintf("MERGE (n:Entity {id: $id}) SET n.name = $name, n:%s", label)
+		// Usamos MERGE con label Entity y luego añadimos el label específico
+		query := fmt.Sprintf("MERGE (n:Entity {id: $id}) SET n.name = $name SET n:%s", label)
 		params := map[string]interface{}{
 			"id":   cleanID,
 			"name": n.ID,
 		}
 		if err := s.graphStore.ExecuteWrite(ctx, query, params); err != nil {
-			log.Printf("Error escribiendo nodo %s: %v", n.ID, err)
+			log.Printf("Error al escribir nodo %s: %v", n.ID, err)
+		} else {
+			log.Printf("  Nodo guardado: %s (%s)", n.ID, label)
 		}
 	}
 
@@ -255,7 +258,9 @@ DoneReading:
 			"target": targetID,
 		}
 		if err := s.graphStore.ExecuteWrite(ctx, query, params); err != nil {
-			log.Printf("Error escribiendo relación %s->%s: %v", r.Source, r.Target, err)
+			log.Printf("Error al escribir relacion %s->%s: %v", r.Source, r.Target, err)
+		} else {
+			log.Printf("  Relacion guardada: %s -[%s]-> %s", r.Source, relType, r.Target)
 		}
 	}
 
@@ -278,9 +283,19 @@ func (s *IngestService) splitText(text string, chunkSize int) []string {
 }
 
 func cleanJSON(s string) string {
+	// Primero limpiamos markdown code blocks
 	s = strings.ReplaceAll(s, "```json", "")
 	s = strings.ReplaceAll(s, "```", "")
-	return strings.TrimSpace(s)
+	s = strings.TrimSpace(s)
+
+	// Si el LLM añadió texto antes del JSON, extraemos solo el JSON
+	// Buscamos el primer '{' y el último '}'
+	start := strings.Index(s, "{")
+	end := strings.LastIndex(s, "}")
+	if start != -1 && end != -1 && end > start {
+		s = s[start : end+1]
+	}
+	return s
 }
 
 // sanitize limpia strings para usarlos en Cypher (evita inyecciones básicas)
