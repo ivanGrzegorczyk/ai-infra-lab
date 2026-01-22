@@ -73,6 +73,80 @@ func (m *MockVectorStoreForIngest) Search(ctx context.Context, collectionName st
 	return nil, nil
 }
 
+// 4. Mock LLM Provider (para GraphRAG extractor)
+type MockExtractorLLM struct {
+	Response string // JSON que retornará el mock
+	Fail     bool
+}
+
+func (m *MockExtractorLLM) GenerateStream(ctx context.Context, req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error) {
+	resChan := make(chan domain.ChatResponse, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		if m.Fail {
+			errChan <- errors.New("LLM error simulado")
+			close(errChan)
+			close(resChan)
+			return
+		}
+		resChan <- domain.ChatResponse{Content: m.Response}
+		close(resChan)
+		// No cerramos errChan inmediatamente para evitar race condition en el select
+		// El servicio sale del loop cuando resChan se cierra
+	}()
+
+	return resChan, errChan
+}
+
+func (m *MockExtractorLLM) GetName() string {
+	return "mock-extractor"
+}
+
+// 5. Mock Graph Store (para Neo4j)
+type MockGraphStore struct {
+	mu           sync.Mutex
+	WrittenNodes []map[string]interface{}
+	WrittenRels  []map[string]interface{}
+	Fail         bool
+}
+
+func NewMockGraphStore() *MockGraphStore {
+	return &MockGraphStore{
+		WrittenNodes: []map[string]interface{}{},
+		WrittenRels:  []map[string]interface{}{},
+	}
+}
+
+func (m *MockGraphStore) Close() error {
+	return nil
+}
+
+func (m *MockGraphStore) ExecuteQuery(ctx context.Context, query string, params map[string]interface{}) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
+func (m *MockGraphStore) ExecuteWrite(ctx context.Context, query string, params map[string]interface{}) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.Fail {
+		return errors.New("neo4j error simulado")
+	}
+
+	// Detectar si es nodo o relación por el contenido del query
+	if _, hasSource := params["source"]; hasSource {
+		m.WrittenRels = append(m.WrittenRels, params)
+	} else if _, hasID := params["id"]; hasID {
+		m.WrittenNodes = append(m.WrittenNodes, params)
+	}
+	return nil
+}
+
+func (m *MockGraphStore) HealthCheck(ctx context.Context) error {
+	return nil
+}
+
 // --- TEST SETUP ---
 
 func setupIngest() (*IngestService, *MockJobRepo, *MockEmbedder, *MockVectorStoreForIngest) {
@@ -80,8 +154,22 @@ func setupIngest() (*IngestService, *MockJobRepo, *MockEmbedder, *MockVectorStor
 	embedder := &MockEmbedder{}
 	vectorStore := &MockVectorStoreForIngest{}
 
-	svc := NewIngestService(jobRepo, embedder, vectorStore)
+	// extractorLLM y graphStore se pasan como nil para tests básicos sin GraphRAG
+	// El servicio verifica nil antes de usar graphStore
+	svc := NewIngestService(jobRepo, embedder, vectorStore, nil, nil)
 	return svc, jobRepo, embedder, vectorStore
+}
+
+// Setup con GraphRAG habilitado
+func setupIngestWithGraphRAG() (*IngestService, *MockJobRepo, *MockEmbedder, *MockVectorStoreForIngest, *MockExtractorLLM, *MockGraphStore) {
+	jobRepo := NewMockJobRepo()
+	embedder := &MockEmbedder{}
+	vectorStore := &MockVectorStoreForIngest{}
+	extractorLLM := &MockExtractorLLM{}
+	graphStore := NewMockGraphStore()
+
+	svc := NewIngestService(jobRepo, embedder, vectorStore, extractorLLM, graphStore)
+	return svc, jobRepo, embedder, vectorStore, extractorLLM, graphStore
 }
 
 // --- TESTS ---
@@ -178,5 +266,156 @@ func TestProcessJob_EmbeddingFailure(t *testing.T) {
 	finalJob, _ := repo.GetJob(context.Background(), job.ID)
 	if finalJob.Status != domain.StatusFailed {
 		t.Errorf("El job debería haber fallado, está en %s", finalJob.Status)
+	}
+}
+
+// --- TESTS GRAPHRAG ---
+
+// Test 4: Verificar que GraphRAG extrae nodos y relaciones correctamente
+func TestProcessJob_GraphRAG_ExtractsNodesAndRelations(t *testing.T) {
+	svc, repo, _, vectorStore, extractorLLM, graphStore := setupIngestWithGraphRAG()
+
+	// Configuramos el mock del LLM para retornar un JSON válido de grafo
+	extractorLLM.Response = `{"nodes": [{"id": "Go", "label": "TOOL"}, {"id": "Microservices", "label": "CONCEPT"}], "relationships": [{"source": "Go", "target": "Microservices", "type": "BUILDS"}]}`
+
+	job := domain.IngestJob{
+		ID:        "job-graphrag-test",
+		Status:    domain.StatusPending,
+		CreatedAt: time.Now(),
+		Metadata:  map[string]interface{}{"source": "test"},
+	}
+	repo.SaveJob(context.Background(), job)
+
+	// Texto corto para un solo chunk
+	svc.processJob(context.Background(), job, "Go es ideal para microservices")
+
+	// VALIDACIONES
+
+	// 1. Job completado
+	finalJob, _ := repo.GetJob(context.Background(), job.ID)
+	if finalJob.Status != domain.StatusCompleted {
+		t.Errorf("El job debería estar completed, está en: %s (Msg: %s)", finalJob.Status, finalJob.Message)
+	}
+
+	// 2. Vectores guardados (RAG tradicional sigue funcionando)
+	if len(vectorStore.UpsertedDocs) != 1 {
+		t.Errorf("Se esperaba 1 vector, se generaron %d", len(vectorStore.UpsertedDocs))
+	}
+
+	// 3. Nodos escritos en Neo4j
+	if len(graphStore.WrittenNodes) != 2 {
+		t.Errorf("Se esperaban 2 nodos escritos, se escribieron %d", len(graphStore.WrittenNodes))
+	}
+
+	// 4. Relaciones escritas en Neo4j
+	if len(graphStore.WrittenRels) != 1 {
+		t.Errorf("Se esperaba 1 relación escrita, se escribieron %d", len(graphStore.WrittenRels))
+	}
+
+	// 5. Verificar contenido del mensaje final (debe incluir stats de grafo)
+	if finalJob.Message == "" {
+		t.Error("El mensaje final no debería estar vacío")
+	}
+}
+
+// Test 5: Verificar que GraphRAG falla gracefully (soft fail - no rompe el job)
+func TestProcessJob_GraphRAG_SoftFailOnLLMError(t *testing.T) {
+	svc, repo, _, vectorStore, extractorLLM, _ := setupIngestWithGraphRAG()
+
+	// Configuramos el LLM para fallar
+	extractorLLM.Fail = true
+
+	job := domain.IngestJob{
+		ID:        "job-graphrag-softfail",
+		Status:    domain.StatusPending,
+		CreatedAt: time.Now(),
+	}
+	repo.SaveJob(context.Background(), job)
+
+	svc.processJob(context.Background(), job, "Texto de prueba")
+
+	// El job debe completarse aunque GraphRAG falle (soft fail)
+	finalJob, _ := repo.GetJob(context.Background(), job.ID)
+	if finalJob.Status != domain.StatusCompleted {
+		t.Errorf("El job debería completarse aunque GraphRAG falle, está en: %s", finalJob.Status)
+	}
+
+	// Los vectores deben haberse guardado correctamente
+	if len(vectorStore.UpsertedDocs) != 1 {
+		t.Errorf("Los vectores deberían guardarse aunque GraphRAG falle, hay %d", len(vectorStore.UpsertedDocs))
+	}
+}
+
+// Test 6: Verificar que GraphRAG maneja JSON inválido del LLM
+func TestProcessJob_GraphRAG_InvalidJSONFromLLM(t *testing.T) {
+	svc, repo, _, vectorStore, extractorLLM, graphStore := setupIngestWithGraphRAG()
+
+	// El LLM retorna JSON inválido
+	extractorLLM.Response = `esto no es json válido {}`
+
+	job := domain.IngestJob{
+		ID:        "job-graphrag-badjson",
+		Status:    domain.StatusPending,
+		CreatedAt: time.Now(),
+	}
+	repo.SaveJob(context.Background(), job)
+
+	svc.processJob(context.Background(), job, "Texto de prueba")
+
+	// El job debe completarse (soft fail en GraphRAG)
+	finalJob, _ := repo.GetJob(context.Background(), job.ID)
+	if finalJob.Status != domain.StatusCompleted {
+		t.Errorf("El job debería completarse con JSON inválido, está en: %s", finalJob.Status)
+	}
+
+	// No debe haber nodos escritos porque el JSON era inválido
+	if len(graphStore.WrittenNodes) != 0 {
+		t.Errorf("No deberían escribirse nodos con JSON inválido, hay %d", len(graphStore.WrittenNodes))
+	}
+
+	// Pero los vectores sí deben guardarse
+	if len(vectorStore.UpsertedDocs) != 1 {
+		t.Errorf("Los vectores deberían guardarse aunque el JSON sea inválido")
+	}
+}
+
+// Test 7: Verificar GraphRAG con múltiples chunks
+func TestProcessJob_GraphRAG_MultipleChunks(t *testing.T) {
+	svc, repo, _, vectorStore, extractorLLM, graphStore := setupIngestWithGraphRAG()
+
+	// Cada chunk extraerá 1 nodo
+	extractorLLM.Response = `{
+		"nodes": [{"id": "Entity", "label": "CONCEPT"}],
+		"relationships": []
+	}`
+
+	job := domain.IngestJob{
+		ID:        "job-graphrag-multichunk",
+		Status:    domain.StatusPending,
+		CreatedAt: time.Now(),
+	}
+	repo.SaveJob(context.Background(), job)
+
+	// Texto largo para generar 2 chunks (ChunkSize=500)
+	longText := ""
+	for i := 0; i < 60; i++ {
+		longText += "0123456789" // 600 chars = 2 chunks
+	}
+
+	svc.processJob(context.Background(), job, longText)
+
+	finalJob, _ := repo.GetJob(context.Background(), job.ID)
+	if finalJob.Status != domain.StatusCompleted {
+		t.Errorf("El job debería estar completed, está en: %s", finalJob.Status)
+	}
+
+	// 2 chunks = 2 vectores
+	if len(vectorStore.UpsertedDocs) != 2 {
+		t.Errorf("Se esperaban 2 vectores, hay %d", len(vectorStore.UpsertedDocs))
+	}
+
+	// 2 chunks = 2 llamadas al LLM = 2 nodos (uno por chunk)
+	if len(graphStore.WrittenNodes) != 2 {
+		t.Errorf("Se esperaban 2 nodos (1 por chunk), hay %d", len(graphStore.WrittenNodes))
 	}
 }

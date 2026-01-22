@@ -41,9 +41,9 @@ OUTPUT JSON STRICTO:
 )
 
 type IngestService struct {
-	jobRepo     ports.JobRepository
-	embedder    ports.EmbeddingGenerator
-	vectorStore ports.VectorStore
+	jobRepo      ports.JobRepository
+	embedder     ports.EmbeddingGenerator
+	vectorStore  ports.VectorStore
 	extractorLLM ports.LLMProvider
 	graphStore   ports.GraphRepository
 }
