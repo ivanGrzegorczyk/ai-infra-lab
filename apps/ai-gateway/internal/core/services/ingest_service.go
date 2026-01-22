@@ -109,11 +109,13 @@ func (s *IngestService) processJob(ctx context.Context, job domain.IngestJob, co
 			return
 		}
 
-		docID := fmt.Sprintf("%s-chunk-%d", job.ID, i)
+		// Genera un UUID válido para cada chunk (Qdrant requiere UUIDs)
+		docID := uuid.New().String()
 		chunkMeta := make(map[string]interface{})
 		for k, v := range job.Metadata {
 			chunkMeta[k] = v
 		}
+		chunkMeta["job_id"] = job.ID
 		chunkMeta["chunk_index"] = i
 		chunkMeta["source_text"] = chunkText
 
