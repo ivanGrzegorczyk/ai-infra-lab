@@ -62,7 +62,7 @@ func main() {
 	// ---------------------------------------------------------
 
 	chatService := services.NewChatService(ollamaClient, groqClient, sessionRepo, ollamaClient, qdrantAdapter)
-	ingestService := services.NewIngestService(jobRepo, ollamaClient, qdrantAdapter)
+	ingestService := services.NewIngestService(jobRepo, ollamaClient, qdrantAdapter, groqClient, neo4jAdapter)
 
 	// ---------------------------------------------------------
 	// 4. Inicializar Handlers (Http)
