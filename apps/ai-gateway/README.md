@@ -12,10 +12,11 @@ El **AI Gateway** es el núcleo de la infraestructura de Inteligencia Artificial
 3. [Configuración](#-configuración)
 4. [API Reference](#-api-reference)
 5. [RAG: Ingesta y Búsqueda Semántica](#-rag-ingesta-y-búsqueda-semántica)
-6. [Gestión de Memoria y Contexto](#-gestión-de-memoria-y-contexto)
-7. [Resiliencia y Safety Break](#-resiliencia-y-safety-break)
-8. [Observabilidad](#-observabilidad)
-9. [Despliegue y Desarrollo](#-despliegue-y-desarrollo)
+6. [GraphRAG: Knowledge Graph](#-graphrag-knowledge-graph)
+7. [Gestión de Memoria y Contexto](#-gestión-de-memoria-y-contexto)
+8. [Resiliencia y Safety Break](#-resiliencia-y-safety-break)
+9. [Observabilidad](#-observabilidad)
+10. [Despliegue y Desarrollo](#-despliegue-y-desarrollo)
 
 ---
 
@@ -24,6 +25,7 @@ El **AI Gateway** es el núcleo de la infraestructura de Inteligencia Artificial
 * **Hybrid AI Routing:** Enrutamiento dinámico entre **Ollama** (privacidad/local) y **Groq** (velocidad/nube). Si Ollama no está disponible, el sistema puede hacer fallback transparente o notificar al usuario.
 * **Session Memory (Redis):** Persistencia de conversaciones. El gateway "recuerda" el contexto de charlas pasadas mediante un `session_id` que vence tras 24 horas de inactividad.
 * **RAG (Retrieval-Augmented Generation):** Sistema completo de ingesta de documentos, vectorización automática con embeddings (nomic-embed-text) y búsqueda semántica en Qdrant para enriquecer las respuestas con conocimiento externo.
+* **GraphRAG (Knowledge Graph):** Extracción automática de entidades y relaciones desde documentos usando LLM. Almacenamiento en Neo4j con búsqueda flexible por keywords tokenizados. Combina Vector RAG + Graph RAG para respuestas más precisas.
 * **Smart Summarization:** Gestión inteligente de la ventana de contexto. Si una conversación supera los **4096 tokens**, el sistema resume automáticamente los mensajes antiguos para mantener la coherencia sin romper el límite del modelo.
 * **Safety Break:** Disyuntor de emergencia que corta la generación si un modelo entra en un bucle infinito (> 1500 tokens por respuesta).
 * **Streaming Nativo:** Soporte total para **Server-Sent Events (SSE)**, entregando tokens en tiempo real con baja latencia.
@@ -37,6 +39,7 @@ El servicio sigue una **Arquitectura Hexagonal (Ports & Adapters)** para desacop
 1.  **Entrada:** El request llega vía HTTP (`/v1/chat`). El `AuthMiddleware` valida la API Key contra el repositorio local.
 2.  **Core:** El `ChatService` orquesta la lógica:
     * Recupera el historial de **Redis**.
+    * Ejecuta **Hybrid RAG**: búsqueda vectorial en Qdrant + búsqueda de relaciones en Neo4j.
     * Verifica el presupuesto de tokens (y resume si es necesario).
     * Selecciona el proveedor (Ollama/Groq).
 3.  **Salida:** Los tokens se transmiten al cliente vía SSE mientras se capturan asíncronamente para actualizar el historial en Redis.
@@ -54,7 +57,9 @@ El servicio se configura mediante variables de entorno y un archivo JSON para la
 | `OLLAMA_URL` | URL del servicio Ollama (interno o externo). | `http://localhost:11434` |
 | `GROQ_API_KEY` | API Key maestra para acceder a Groq Cloud. | `""` |
 | `REDIS_ADDR` | Dirección del servidor Redis para sesiones. | `redis-service.ai-lab:6379` |
-| `QDRANT_ADDR` | Dirección del servidor Qdrant para RAG. | `qdrant-service.ai-lab:6333` |
+| `QDRANT_ADDR` | Dirección del servidor Qdrant para RAG. | `qdrant-service.ai-lab:6334` |
+| `NEO4J_URI` | URI de conexión a Neo4j para GraphRAG. | `bolt://neo4j-service:7687` |
+| `NEO4J_AUTH` | Credenciales de Neo4j (formato `user/password`). | `neo4j/password` |
 
 ### Gestión de API Keys (`configs/keys.json`)
 El acceso al Gateway se controla mediante un archivo JSON que define las keys válidas y sus permisos.
@@ -154,12 +159,25 @@ El Gateway implementa un sistema completo de **Retrieval-Augmented Generation (R
 6. **Almacenamiento:** Los vectores se guardan en Qdrant con metadata (filename, chunk_index, job_id).
 7. **Finalización:** El job se marca como `completed` o `failed` según el resultado.
 
-### Flujo de Búsqueda (Durante el Chat)
+### Flujo de Búsqueda (Durante el Chat) - Hybrid RAG
 
-1. **Embedding de Query:** Cuando llega una pregunta del usuario, se genera su embedding.
-2. **Similarity Search:** Se buscan los Top 3 documentos más similares en Qdrant (score > 0.7).
-3. **Inyección de Contexto:** Los fragmentos relevantes se añaden como mensaje de sistema antes de enviar al LLM.
-4. **Generación Enriquecida:** El modelo responde con conocimiento del documento + su entrenamiento base.
+El sistema combina **Vector RAG + Graph RAG** para obtener el mejor contexto posible:
+
+1. **Vector RAG (Qdrant):**
+   - Se genera el embedding de la pregunta del usuario.
+   - Se buscan los Top 3 documentos más similares (score > 0.25).
+   - Los fragmentos relevantes se añaden como contexto.
+
+2. **Graph RAG (Neo4j):**
+   - Se tokeniza la pregunta eliminando stopwords.
+   - Se buscan entidades que coincidan con las palabras clave.
+   - Se expanden las relaciones directas de cada entidad encontrada.
+   - Las relaciones se añaden como contexto estructurado.
+
+3. **Generación Enriquecida:** El modelo responde con:
+   - Conocimiento de documentos (Vector RAG)
+   - Relaciones explícitas entre conceptos (Graph RAG)
+   - Su entrenamiento base
 
 ### Endpoints de RAG
 
@@ -251,7 +269,68 @@ El sistema automáticamente recuperará los chunks relevantes del documento inge
 | **Top-K Retrieval** | 3 documentos | `chat_service.go:retrieveContext` |
 | **Umbral de Relevancia** | Score > 0.25 | `chat_service.go` |
 | **Colección Qdrant** | `knowledge_base` | `ingest_service.go:CollectionName` |
-| **Graph Database** | Neo4j | `chat_service.go:retrieveGraphContext` |
+
+---
+
+## 🕸 GraphRAG: Knowledge Graph
+
+Además del RAG tradicional basado en vectores, el Gateway implementa **GraphRAG**: un sistema de extracción y búsqueda de conocimiento estructurado en forma de grafo.
+
+### ¿Por qué GraphRAG?
+
+El RAG vectorial es excelente para encontrar fragmentos de texto similares, pero pierde las **relaciones explícitas** entre conceptos. GraphRAG complementa esto extrayendo entidades y sus conexiones, permitiendo responder preguntas como:
+- "¿Qué tecnologías usa el API Gateway?" → `api_gateway -[USES]-> redis, qdrant, neo4j`
+- "¿Cómo se conecta curl con el sistema?" → `curl -[CONNECTS_TO]-> api_gateway`
+
+### Flujo de Extracción (Durante Ingesta)
+
+1. **Chunking:** El documento se divide en fragmentos (igual que Vector RAG).
+2. **Extracción LLM:** Cada chunk se envía a Groq con un prompt especializado que extrae:
+   - **Nodos:** Entidades con ID normalizado, nombre original y label (TOOL, CONCEPT, PERSON, ORG, PROJECT).
+   - **Relaciones:** Conexiones tipadas entre entidades (USES, IMPLEMENTS, CONNECTS_TO, GENERATES, etc.).
+3. **Normalización:** Los IDs se normalizan a lowercase con underscores (`API Gateway` → `api_gateway`).
+4. **Keywords:** Se extraen palabras clave del nombre original para búsqueda flexible (`algoritmo_de_resumen` → `[algoritmo, de, resumen]`).
+5. **Almacenamiento:** Nodos y relaciones se guardan en Neo4j usando Cypher MERGE (evita duplicados).
+
+### Flujo de Búsqueda (Durante Chat)
+
+1. **Tokenización:** La pregunta del usuario se tokeniza eliminando stopwords en español e inglés.
+   - `"¿Qué tecnologías usa el algoritmo de resumen?"` → `[tecnologias, algoritmo, resumen]`
+2. **Búsqueda Flexible:** Se buscan nodos en Neo4j que coincidan por:
+   - ID normalizado contenido en el prompt
+   - Nombre original contenido en el prompt
+   - Palabras del query que coincidan con keywords del nodo
+3. **Expansión:** Para cada entidad encontrada, se traen sus relaciones directas (1 salto).
+4. **Inyección:** El contexto del grafo se añade al prompt junto con el contexto vectorial.
+
+### Ejemplo de Contexto Generado
+
+```
+RELACIONES DEL GRAFO DE CONOCIMIENTO:
+- api_gateway -[USES]-> redis
+- api_gateway -[USES]-> qdrant
+- api_gateway -[USES]-> neo4j
+- api_gateway -[IMPLEMENTA]-> algoritmo_de_resumen
+- ollama -[GENERATES]-> embeddings
+- curl -[CONNECTS_TO]-> api_gateway
+```
+
+### Configuración de GraphRAG
+
+| Parámetro | Valor | Ubicación |
+| :--- | :--- | :--- |
+| **LLM Extractor** | Groq (llama3) | `ingest_service.go` |
+| **Max Nodos/Chunk** | 10 | `GraphSystemPrompt` |
+| **Max Relaciones/Chunk** | 15 | `GraphSystemPrompt` |
+| **Labels Soportados** | TOOL, CONCEPT, PERSON, ORG, PROJECT | `GraphSystemPrompt` |
+| **Relaciones Comunes** | USES, IMPLEMENTS, DEPLOYS, CONNECTS_TO, IS_A, CREATED_BY, GENERATES | `GraphSystemPrompt` |
+| **Min Keyword Length** | 2 caracteres | `extractKeywords()` |
+| **Min Query Word Length** | 3 caracteres | `tokenizeQuery()` |
+| **Stopwords** | ES + EN (el, la, the, is, que, como, etc.) | `tokenizeQuery()` |
+
+### Soft Fail
+
+Si la extracción de grafo falla (error de LLM, JSON inválido, etc.), el sistema **no falla el job completo**. Solo se loguea el error y se continúa con el siguiente chunk. Esto garantiza que el Vector RAG siempre funcione, incluso si GraphRAG tiene problemas temporales.
 
 ---
 
