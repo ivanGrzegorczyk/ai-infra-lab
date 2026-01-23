@@ -237,7 +237,7 @@ func (s *chatService) retrieveGraphContext(ctx context.Context, query string) st
 	}
 
 	if len(results) == 0 {
-		log.Printf("RAG Graph: No se encontraron entidades relacionadas.")
+		log.Printf("RAG Graph: No se encontraron entidades para query: '%s'", query)
 		return ""
 	}
 
@@ -282,8 +282,10 @@ func (s *chatService) retrieveGraphContext(ctx context.Context, query string) st
 		return ""
 	}
 
+	graphContext := sb.String()
 	log.Printf("RAG Graph: Se encontraron %d relaciones para %d entidades.", relCount, len(results))
-	return sb.String()
+	log.Printf("RAG Graph Context:\n%s", graphContext)
+	return graphContext
 }
 
 // selectProviders devuelve la lista de proveedores en orden de prioridad según preferencias y permisos
