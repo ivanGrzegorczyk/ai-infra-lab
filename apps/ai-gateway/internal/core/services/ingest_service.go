@@ -198,9 +198,12 @@ func (s *IngestService) extractAndSaveGraph(ctx context.Context, text string) (i
 				goto DoneReading
 			}
 			fullResponse.WriteString(chunk.Content)
-		case err := <-errChan:
-			log.Printf("  Error del LLM: %v", err)
-			return 0, 0, err
+		case err, ok := <-errChan:
+			if ok && err != nil {
+				log.Printf("  Error del LLM: %v", err)
+				return 0, 0, err
+			}
+			// Canal cerrado sin error, continuamos
 		case <-ctx.Done():
 			return 0, 0, ctx.Err()
 		}
