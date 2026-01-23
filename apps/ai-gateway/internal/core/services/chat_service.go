@@ -30,15 +30,17 @@ type chatService struct {
 	sessions    ports.SessionRepository
 	embedder    ports.EmbeddingGenerator
 	vectorStore ports.VectorStore
+	graphRepo   ports.GraphRepository
 }
 
-func NewChatService(local, external ports.LLMProvider, sessions ports.SessionRepository, embedder ports.EmbeddingGenerator, store ports.VectorStore) ports.ChatService {
+func NewChatService(local, external ports.LLMProvider, sessions ports.SessionRepository, embedder ports.EmbeddingGenerator, store ports.VectorStore, graphRepo ports.GraphRepository) ports.ChatService {
 	return &chatService{
 		local:       local,
 		external:    external,
 		sessions:    sessions,
 		embedder:    embedder,
 		vectorStore: store,
+		graphRepo:   graphRepo,
 	}
 }
 
@@ -59,19 +61,40 @@ func (s *chatService) ExecuteChat(ctx context.Context, req domain.ChatRequest, k
 		lastUserMsg = req.Messages[len(req.Messages)-1].Content
 	}
 
-	contextBlock := ""
+	// 2a. VECTOR RAG (Qdrant)
+	vectorContext := ""
 	if lastUserMsg != "" {
-		log.Printf("RAG: Busca contexto para query: '%s'", lastUserMsg)
+		log.Printf("RAG Vector: Busca contexto para query: '%s'", lastUserMsg)
 
 		docs, err := s.retrieveContext(ctx, lastUserMsg)
 		if err != nil {
-			log.Printf("RAG Error: %v", err)
+			log.Printf("RAG Vector Error: %v", err)
 		} else if len(docs) > 0 {
-			log.Printf("RAG: Se encontraron %d documentos relevantes.", len(docs))
-			contextBlock = s.formatContext(docs)
+			log.Printf("RAG Vector: Se encontraron %d documentos relevantes.", len(docs))
+			vectorContext = s.formatContext(docs)
 		} else {
-			log.Printf("RAG: No se encontro contexto suficiente.")
+			log.Printf("RAG Vector: No se encontro contexto suficiente.")
 		}
+	}
+
+	// 2b. GRAPH RAG (Neo4j)
+	graphContext := ""
+	if lastUserMsg != "" && s.graphRepo != nil {
+		graphContext = s.retrieveGraphContext(ctx, lastUserMsg)
+	}
+
+	// Combinar contextos
+	contextBlock := ""
+	if vectorContext != "" || graphContext != "" {
+		var sb strings.Builder
+		if vectorContext != "" {
+			sb.WriteString(vectorContext)
+		}
+		if graphContext != "" {
+			sb.WriteString("\n")
+			sb.WriteString(graphContext)
+		}
+		contextBlock = sb.String()
 	}
 
 	// 3. Preparar mensajes para inferencia
@@ -188,6 +211,78 @@ func (s *chatService) formatContext(docs []domain.VectorDocument) string {
 		}
 		sb.WriteString(fmt.Sprintf("[Fuente: %s]: %s\n\n", source, doc.Content))
 	}
+	return sb.String()
+}
+
+// retrieveGraphContext busca relaciones en Neo4j basándose en entidades mencionadas en el prompt
+func (s *chatService) retrieveGraphContext(ctx context.Context, query string) string {
+	// Estrategia: Buscar nodos cuyo ID aparezca en el prompt (case insensitive)
+	// y traer sus relaciones directas (1 salto)
+	cypherQuery := `
+		MATCH (n:Entity)
+		WHERE toLower($prompt) CONTAINS n.id
+		OPTIONAL MATCH (n)-[r]->(m:Entity)
+		OPTIONAL MATCH (p:Entity)-[r2]->(n)
+		WITH n, collect(DISTINCT {source: n.name, rel: type(r), target: m.name}) AS outRels,
+		     collect(DISTINCT {source: p.name, rel: type(r2), target: n.name}) AS inRels
+		RETURN n.name AS entity, outRels, inRels
+		LIMIT 5
+	`
+	params := map[string]interface{}{"prompt": strings.ToLower(query)}
+
+	results, err := s.graphRepo.ExecuteQuery(ctx, cypherQuery, params)
+	if err != nil {
+		log.Printf("RAG Graph Error: %v", err)
+		return ""
+	}
+
+	if len(results) == 0 {
+		log.Printf("RAG Graph: No se encontraron entidades relacionadas.")
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("RELACIONES DEL GRAFO DE CONOCIMIENTO:\n")
+	relCount := 0
+
+	for _, row := range results {
+		entityName, _ := row["entity"].(string)
+
+		// Procesar relaciones salientes
+		if outRels, ok := row["outRels"].([]interface{}); ok {
+			for _, rel := range outRels {
+				if relMap, ok := rel.(map[string]interface{}); ok {
+					target, _ := relMap["target"].(string)
+					relType, _ := relMap["rel"].(string)
+					if target != "" && relType != "" {
+						sb.WriteString(fmt.Sprintf("- %s -[%s]-> %s\n", entityName, relType, target))
+						relCount++
+					}
+				}
+			}
+		}
+
+		// Procesar relaciones entrantes
+		if inRels, ok := row["inRels"].([]interface{}); ok {
+			for _, rel := range inRels {
+				if relMap, ok := rel.(map[string]interface{}); ok {
+					source, _ := relMap["source"].(string)
+					relType, _ := relMap["rel"].(string)
+					if source != "" && relType != "" {
+						sb.WriteString(fmt.Sprintf("- %s -[%s]-> %s\n", source, relType, entityName))
+						relCount++
+					}
+				}
+			}
+		}
+	}
+
+	if relCount == 0 {
+		log.Printf("RAG Graph: Entidades encontradas pero sin relaciones.")
+		return ""
+	}
+
+	log.Printf("RAG Graph: Se encontraron %d relaciones para %d entidades.", relCount, len(results))
 	return sb.String()
 }
 

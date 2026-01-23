@@ -19,24 +19,19 @@ const (
 	VectorSize     = 768
 	ChunkSize      = 500
 
-	// PROMPT PARA EXTRAER GRAFO
-	GraphSystemPrompt = `
-Eres un experto analizando arquitectura de software. Tu trabajo es construir un Grafo de Conocimiento.
-Analiza el texto y extrae Nodos y Relaciones.
+	// PROMPT PARA EXTRAER GRAFO - Mejorado para mayor calidad
+	GraphSystemPrompt = `You are a knowledge graph extraction expert. Extract entities and relationships from the text.
 
-NODOS (Entities):
-- Identifica tecnologías, herramientas, conceptos, patrones, personas u organizaciones.
-- Tipos sugeridos: TOOL, CONCEPT, PERSON, ORG, PROJECT.
+RULES:
+1. Output ONLY valid JSON, no explanations or markdown
+2. Entity IDs must be lowercase, alphanumeric with underscores only (e.g., "neo4j", "api_gateway")
+3. Labels: TOOL, CONCEPT, PERSON, ORG, PROJECT (pick the most specific)
+4. Relationship types: UPPERCASE English verbs (USES, IMPLEMENTS, DEPLOYS, CONNECTS_TO, IS_A, CREATED_BY)
+5. Only extract meaningful technical entities, skip generic words like "system", "data", "file"
+6. Maximum 10 nodes and 15 relationships per chunk
 
-RELACIONES (Edges):
-- Identifica cómo interactúan (ej: USES, DEPLOYS, CREATED_BY, IS_A).
-- Usa verbos en INFINITIVO, MAYÚSCULAS y en INGLÉS (ej: USES, not "usa").
-
-OUTPUT JSON STRICTO:
-{
-  "nodes": [{"id": "Neo4j", "label": "TOOL"}, {"id": "Database", "label": "CONCEPT"}],
-  "relationships": [{"source": "Neo4j", "target": "Database", "type": "IS_A"}]
-}
+OUTPUT FORMAT (strict JSON):
+{"nodes":[{"id":"redis","label":"TOOL"}],"relationships":[{"source":"api_gateway","target":"redis","type":"USES"}]}
 `
 )
 
@@ -218,14 +213,18 @@ DoneReading:
 	// 3. Escribir en Neo4j (Cypher)
 	// Guardamos Nodos
 	for _, n := range data.Nodes {
-		// Normalizamos ID a minúsculas para evitar duplicados por casing, pero guardamos el original como nombre
-		cleanID := strings.ToLower(strings.TrimSpace(n.ID))
-		label := sanitize(n.Label) // Evitar inyecciones
-		if label == "" {
-			label = "Concept"
+		// Normalizamos ID para evitar duplicados y caracteres especiales
+		cleanID := normalizeID(n.ID)
+		if cleanID == "" {
+			continue // Skip nodos sin ID valido
 		}
 
-		// Usamos MERGE con label Entity y luego añadimos el label específico
+		label := sanitize(n.Label)
+		if label == "" {
+			label = "CONCEPT"
+		}
+
+		// Usamos MERGE con label Entity y luego añadimos el label especifico
 		query := fmt.Sprintf("MERGE (n:Entity {id: $id}) SET n.name = $name SET n:%s", label)
 		params := map[string]interface{}{
 			"id":   cleanID,
@@ -234,14 +233,18 @@ DoneReading:
 		if err := s.graphStore.ExecuteWrite(ctx, query, params); err != nil {
 			log.Printf("Error al escribir nodo %s: %v", n.ID, err)
 		} else {
-			log.Printf("  Nodo guardado: %s (%s)", n.ID, label)
+			log.Printf("  Nodo guardado: %s [id=%s] (%s)", n.ID, cleanID, label)
 		}
 	}
 
 	// Guardamos Relaciones
 	for _, r := range data.Relationships {
-		sourceID := strings.ToLower(strings.TrimSpace(r.Source))
-		targetID := strings.ToLower(strings.TrimSpace(r.Target))
+		sourceID := normalizeID(r.Source)
+		targetID := normalizeID(r.Target)
+		if sourceID == "" || targetID == "" {
+			continue // Skip relaciones con IDs invalidos
+		}
+
 		relType := sanitize(r.Type)
 		if relType == "" {
 			relType = "RELATED_TO"
@@ -288,8 +291,8 @@ func cleanJSON(s string) string {
 	s = strings.ReplaceAll(s, "```", "")
 	s = strings.TrimSpace(s)
 
-	// Si el LLM añadió texto antes del JSON, extraemos solo el JSON
-	// Buscamos el primer '{' y el último '}'
+	// Si el LLM añadio texto antes del JSON, extraemos solo el JSON
+	// Buscamos el primer '{' y el ultimo '}'
 	start := strings.Index(s, "{")
 	end := strings.LastIndex(s, "}")
 	if start != -1 && end != -1 && end > start {
@@ -298,8 +301,22 @@ func cleanJSON(s string) string {
 	return s
 }
 
-// sanitize limpia strings para usarlos en Cypher (evita inyecciones básicas)
+// sanitize limpia strings para usarlos en Cypher (evita inyecciones basicas)
 func sanitize(s string) string {
 	reg, _ := regexp.Compile("[^a-zA-Z0-9_]+")
 	return strings.ToUpper(reg.ReplaceAllString(s, "_"))
+}
+
+// normalizeID limpia y normaliza IDs de entidades para el grafo
+func normalizeID(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	// Reemplazar caracteres especiales y espacios con underscores
+	reg, _ := regexp.Compile("[^a-z0-9_]+")
+	s = reg.ReplaceAllString(s, "_")
+	// Eliminar underscores duplicados y al inicio/final
+	for strings.Contains(s, "__") {
+		s = strings.ReplaceAll(s, "__", "_")
+	}
+	s = strings.Trim(s, "_")
+	return s
 }

@@ -80,7 +80,8 @@ func setupService() (ports.ChatService, *MockLLMProvider, *MockLLMProvider, *Moc
 	embedder := &MockEmbeddingGenerator{}
 	vectorStore := &MockVectorStore{SearchResults: []domain.SearchResult{}} // Sin contexto RAG por defecto
 
-	svc := NewChatService(local, external, sessionRepo, embedder, vectorStore)
+	// graphRepo se pasa como nil para tests sin GraphRAG
+	svc := NewChatService(local, external, sessionRepo, embedder, vectorStore, nil)
 	return svc, local, external, sessionRepo, vectorStore
 }
 
@@ -359,7 +360,8 @@ func TestExecuteChat_RAGErrorHandling(t *testing.T) {
 	// Mock de embedder que falla
 	failingEmbedder := &MockFailingEmbedder{}
 
-	svc := NewChatService(local, external, sessionRepo, failingEmbedder, vectorStore)
+	// graphRepo nil para este test
+	svc := NewChatService(local, external, sessionRepo, failingEmbedder, vectorStore, nil)
 
 	local.OnGenerateStream = func(req domain.ChatRequest) (<-chan domain.ChatResponse, <-chan error) {
 		// El chat debería continuar normalmente aunque el RAG falle

@@ -248,10 +248,10 @@ El sistema automáticamente recuperará los chunks relevantes del documento inge
 | **Modelo de Embeddings** | `nomic-embed-text` | Ollama |
 | **Dimensionalidad** | 768 | `ingest_service.go:VectorSize` |
 | **Tamaño de Chunk** | 500 caracteres | `ingest_service.go:ChunkSize` |
-| **Overlap** | 50 caracteres | `ingest_service.go:ChunkOverlap` |
 | **Top-K Retrieval** | 3 documentos | `chat_service.go:retrieveContext` |
-| **Umbral de Relevancia** | Score > 0.7 | `chat_service.go` |
+| **Umbral de Relevancia** | Score > 0.25 | `chat_service.go` |
 | **Colección Qdrant** | `knowledge_base` | `ingest_service.go:CollectionName` |
+| **Graph Database** | Neo4j | `chat_service.go:retrieveGraphContext` |
 
 ---
 
