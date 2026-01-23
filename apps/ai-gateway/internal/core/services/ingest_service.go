@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	CollectionName = "knowledge_base"
-	VectorSize     = 768
-	ChunkSize      = 500
+	CollectionName      = "knowledge_base"
+	VectorSize          = 768
+	ChunkSize           = 500
+	MinChunkForGraphRAG = 50 // Mínimo de caracteres para intentar GraphRAG
 
 	// PROMPT PARA EXTRAER GRAFO - Mejorado para mayor calidad
 	GraphSystemPrompt = `You are a knowledge graph extraction expert. Extract entities and relationships from the text.
@@ -96,8 +97,15 @@ func (s *IngestService) processJob(ctx context.Context, job domain.IngestJob, co
 	// Acumuladores para estadísticas de Grafo
 	nodesCount := 0
 	relsCount := 0
+	totalChunks := len(chunks)
+	graphSkipped := 0
 
 	for i, chunkText := range chunks {
+		// Progreso: Mostrar porcentaje cada 10 chunks o en el primero/último
+		if i == 0 || (i+1) == totalChunks || (i+1)%10 == 0 {
+			progress := float64(i+1) / float64(totalChunks) * 100
+			log.Printf("[Job %s] Progreso: %d/%d (%.1f%%)", job.ID, i+1, totalChunks, progress)
+		}
 		// A. VECTOR RAG (Existente)
 		embedding, err := s.embedder.GenerateEmbedding(ctx, chunkText)
 		if err != nil {
@@ -124,18 +132,20 @@ func (s *IngestService) processJob(ctx context.Context, job domain.IngestJob, co
 
 		// B. GRAPH RAG (Nuevo - Solo procesamos chunks si tenemos GraphStore)
 		if s.graphStore != nil {
-			log.Printf("[Job %s] Extrayendo grafo del chunk %d... (graphStore OK)", job.ID, i)
+			// Saltar chunks muy cortos para evitar errores del LLM
+			if len(strings.TrimSpace(chunkText)) < MinChunkForGraphRAG {
+				graphSkipped++
+				continue
+			}
 			n, r, err := s.extractAndSaveGraph(ctx, chunkText)
 			if err != nil {
 				// No falla todo el job si el grafo falla, solo loguea (Soft Fail)
-				log.Printf("[Job %s] Error en GraphRAG chunk %d: %v", job.ID, i, err)
-			} else {
+				log.Printf("[Job %s] GraphRAG chunk %d: error - %v", job.ID, i, err)
+			} else if n > 0 || r > 0 {
 				nodesCount += n
 				relsCount += r
-				log.Printf("[Job %s] GraphRAG chunk %d: %d nodos, %d rels", job.ID, i, n, r)
+				log.Printf("[Job %s] GraphRAG chunk %d: +%d nodos, +%d rels", job.ID, i, n, r)
 			}
-		} else {
-			log.Printf("[Job %s] GraphStore es nil, saltando GraphRAG", job.ID)
 		}
 	}
 
@@ -149,7 +159,7 @@ func (s *IngestService) processJob(ctx context.Context, job domain.IngestJob, co
 
 	// 4. Finalizar
 	job.Status = domain.StatusCompleted
-	job.Message = fmt.Sprintf("Completado: %d vectores, %d nodos, %d relaciones guardadas.", len(vectorsToUpsert), nodesCount, relsCount)
+	job.Message = fmt.Sprintf("Completado: %d vectores, %d nodos, %d rels (skipped %d chunks cortos)", len(vectorsToUpsert), nodesCount, relsCount, graphSkipped)
 	_ = s.jobRepo.SaveJob(ctx, job)
 	log.Printf("[Job %s] %s", job.ID, job.Message)
 
@@ -190,10 +200,8 @@ func (s *IngestService) extractAndSaveGraph(ctx context.Context, text string) (i
 			{Role: "system", Content: GraphSystemPrompt},
 			{Role: "user", Content: fmt.Sprintf("Texto a analizar: \n%s", text)},
 		},
-		PreferredProvider: "groq", // Forzamos Groq si es posible por velocidad
+		PreferredProvider: "groq",
 	}
-
-	log.Printf("  Llamando a LLM para extracción de grafo...")
 
 	// Usamos un canal para recibir la respuesta (tu interfaz es streaming)
 	resChan, errChan := s.extractorLLM.GenerateStream(ctx, req)
@@ -219,27 +227,42 @@ func (s *IngestService) extractAndSaveGraph(ctx context.Context, text string) (i
 	}
 DoneReading:
 
-	jsonStr := fullResponse.String()
-	log.Printf("  LLM Response (raw): %s", jsonStr)
+	jsonStr := strings.TrimSpace(fullResponse.String())
+
+	// Si la respuesta está vacía, retornamos sin error (chunk sin entidades extraíbles)
+	if jsonStr == "" {
+		return 0, 0, nil
+	}
+
 	// Limpieza básica por si el LLM mete markdown ```json ... ```
 	jsonStr = cleanJSON(jsonStr)
-	log.Printf("  LLM Response (clean): %s", jsonStr)
+
+	// Validar que tengamos algo parecido a JSON
+	if !strings.HasPrefix(jsonStr, "{") || !strings.HasSuffix(jsonStr, "}") {
+		return 0, 0, nil // Respuesta inválida, ignorar silenciosamente
+	}
 
 	// 2. Parsear JSON
 	var data graphJSON
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-		return 0, 0, fmt.Errorf("error parseando JSON del LLM: %v | Raw: %s", err, jsonStr)
+		// Solo logueamos si es un JSON que parece válido pero falló el parse
+		return 0, 0, fmt.Errorf("JSON parse error: %v", err)
 	}
 
-	log.Printf("  Parsed: %d nodes, %d relationships", len(data.Nodes), len(data.Relationships))
+	// Si no hay nodos ni relaciones, retornamos sin procesar
+	if len(data.Nodes) == 0 && len(data.Relationships) == 0 {
+		return 0, 0, nil
+	}
 
 	// 3. Escribir en Neo4j (Cypher)
+	nodesWritten := 0
+	relsWritten := 0
+
 	// Guardamos Nodos
 	for _, n := range data.Nodes {
-		// Normalizamos ID para evitar duplicados y caracteres especiales
 		cleanID := normalizeID(n.ID)
 		if cleanID == "" {
-			continue // Skip nodos sin ID valido
+			continue
 		}
 
 		label := sanitize(n.Label)
@@ -247,12 +270,7 @@ DoneReading:
 			label = "CONCEPT"
 		}
 
-		// Generamos keywords: palabras individuales para búsqueda flexible
 		keywords := extractKeywords(n.ID)
-
-		// Usamos MERGE con label Entity y luego añadimos el label especifico
-		// Guardamos: id (normalizado), name (original), keywords (para búsqueda flexible)
-		// Nota: Cypher no permite agregar labels dinámicos con parámetros, por eso usamos fmt
 		query := fmt.Sprintf("MERGE (n:Entity {id: $id}) SET n.name = $name, n.keywords = $keywords, n.label = $label SET n:%s", label)
 		params := map[string]interface{}{
 			"id":       cleanID,
@@ -260,11 +278,10 @@ DoneReading:
 			"keywords": keywords,
 			"label":    label,
 		}
-		log.Printf("  Guardando nodo %s con keywords: %v", cleanID, keywords)
 		if err := s.graphStore.ExecuteWrite(ctx, query, params); err != nil {
-			log.Printf("Error al escribir nodo %s: %v", n.ID, err)
+			log.Printf("Error nodo %s: %v", cleanID, err)
 		} else {
-			log.Printf("  Nodo guardado: %s [id=%s] (%s)", n.ID, cleanID, label)
+			nodesWritten++
 		}
 	}
 
@@ -273,7 +290,7 @@ DoneReading:
 		sourceID := normalizeID(r.Source)
 		targetID := normalizeID(r.Target)
 		if sourceID == "" || targetID == "" {
-			continue // Skip relaciones con IDs invalidos
+			continue
 		}
 
 		relType := sanitize(r.Type)
@@ -281,24 +298,22 @@ DoneReading:
 			relType = "RELATED_TO"
 		}
 
-		// Query: Busca A y B, crea relación si no existe
 		query := fmt.Sprintf(`
 			MATCH (a:Entity {id: $source}), (b:Entity {id: $target})
 			MERGE (a)-[r:%s]->(b)
 		`, relType)
-
 		params := map[string]interface{}{
 			"source": sourceID,
 			"target": targetID,
 		}
 		if err := s.graphStore.ExecuteWrite(ctx, query, params); err != nil {
-			log.Printf("Error al escribir relacion %s->%s: %v", r.Source, r.Target, err)
+			log.Printf("Error rel %s->%s: %v", sourceID, targetID, err)
 		} else {
-			log.Printf("  Relacion guardada: %s -[%s]-> %s", r.Source, relType, r.Target)
+			relsWritten++
 		}
 	}
 
-	return len(data.Nodes), len(data.Relationships), nil
+	return nodesWritten, relsWritten, nil
 }
 
 // splitText divide el texto en chunks (Implementación simple)

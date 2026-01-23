@@ -286,8 +286,8 @@ func TestProcessJob_GraphRAG_ExtractsNodesAndRelations(t *testing.T) {
 	}
 	repo.SaveJob(context.Background(), job)
 
-	// Texto corto para un solo chunk
-	svc.processJob(context.Background(), job, "Go es ideal para microservices")
+	// Texto suficientemente largo para superar MinChunkForGraphRAG (50 chars)
+	svc.processJob(context.Background(), job, "Go es un lenguaje de programación ideal para construir microservices escalables")
 
 	// VALIDACIONES
 
@@ -332,7 +332,8 @@ func TestProcessJob_GraphRAG_SoftFailOnLLMError(t *testing.T) {
 	}
 	repo.SaveJob(context.Background(), job)
 
-	svc.processJob(context.Background(), job, "Texto de prueba")
+	// Texto suficientemente largo para pasar el filtro MinChunkForGraphRAG
+	svc.processJob(context.Background(), job, "Este es un texto de prueba lo suficientemente largo para procesarlo")
 
 	// El job debe completarse aunque GraphRAG falle (soft fail)
 	finalJob, _ := repo.GetJob(context.Background(), job.ID)
@@ -360,7 +361,8 @@ func TestProcessJob_GraphRAG_InvalidJSONFromLLM(t *testing.T) {
 	}
 	repo.SaveJob(context.Background(), job)
 
-	svc.processJob(context.Background(), job, "Texto de prueba")
+	// Texto suficientemente largo para pasar el filtro MinChunkForGraphRAG
+	svc.processJob(context.Background(), job, "Este es un texto de prueba lo suficientemente largo para procesarlo")
 
 	// El job debe completarse (soft fail en GraphRAG)
 	finalJob, _ := repo.GetJob(context.Background(), job.ID)
