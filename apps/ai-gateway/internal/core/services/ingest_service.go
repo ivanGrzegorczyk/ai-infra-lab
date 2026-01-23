@@ -201,14 +201,18 @@ func (s *IngestService) extractAndSaveGraph(ctx context.Context, text string) (i
 DoneReading:
 
 	jsonStr := fullResponse.String()
+	log.Printf("  LLM Response (raw): %s", jsonStr)
 	// Limpieza básica por si el LLM mete markdown ```json ... ```
 	jsonStr = cleanJSON(jsonStr)
+	log.Printf("  LLM Response (clean): %s", jsonStr)
 
 	// 2. Parsear JSON
 	var data graphJSON
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return 0, 0, fmt.Errorf("error parseando JSON del LLM: %v | Raw: %s", err, jsonStr)
 	}
+
+	log.Printf("  Parsed: %d nodes, %d relationships", len(data.Nodes), len(data.Relationships))
 
 	// 3. Escribir en Neo4j (Cypher)
 	// Guardamos Nodos
