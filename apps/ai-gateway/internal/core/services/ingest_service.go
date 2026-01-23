@@ -233,16 +233,19 @@ DoneReading:
 
 		// Usamos MERGE con label Entity y luego añadimos el label especifico
 		// Guardamos: id (normalizado), name (original), keywords (para búsqueda flexible)
-		query := fmt.Sprintf("MERGE (n:Entity {id: $id}) SET n.name = $name, n.keywords = $keywords SET n:%s", label)
+		// Nota: Cypher no permite agregar labels dinámicos con parámetros, por eso usamos fmt
+		query := fmt.Sprintf("MERGE (n:Entity {id: $id}) SET n.name = $name, n.keywords = $keywords, n.label = $label SET n:%s", label)
 		params := map[string]interface{}{
 			"id":       cleanID,
 			"name":     n.ID,
 			"keywords": keywords,
+			"label":    label,
 		}
+		log.Printf("  Guardando nodo %s con keywords: %v", cleanID, keywords)
 		if err := s.graphStore.ExecuteWrite(ctx, query, params); err != nil {
 			log.Printf("Error al escribir nodo %s: %v", n.ID, err)
 		} else {
-			log.Printf("  Nodo guardado: %s [id=%s] (%s) keywords=%v", n.ID, cleanID, label, keywords)
+			log.Printf("  Nodo guardado: %s [id=%s] (%s)", n.ID, cleanID, label)
 		}
 	}
 
