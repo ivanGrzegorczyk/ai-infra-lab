@@ -123,7 +123,7 @@ func (s *IngestService) processJob(ctx context.Context, job domain.IngestJob, co
 
 		// B. GRAPH RAG (Nuevo - Solo procesamos chunks si tenemos GraphStore)
 		if s.graphStore != nil {
-			log.Printf("[Job %s] Extrayendo grafo del chunk %d...", job.ID, i)
+			log.Printf("[Job %s] Extrayendo grafo del chunk %d... (graphStore OK)", job.ID, i)
 			n, r, err := s.extractAndSaveGraph(ctx, chunkText)
 			if err != nil {
 				// No falla todo el job si el grafo falla, solo loguea (Soft Fail)
@@ -131,7 +131,10 @@ func (s *IngestService) processJob(ctx context.Context, job domain.IngestJob, co
 			} else {
 				nodesCount += n
 				relsCount += r
+				log.Printf("[Job %s] GraphRAG chunk %d: %d nodos, %d rels", job.ID, i, n, r)
 			}
+		} else {
+			log.Printf("[Job %s] GraphStore es nil, saltando GraphRAG", job.ID)
 		}
 	}
 
