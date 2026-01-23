@@ -1,0 +1,4 @@
+{
+  "content": "El API Gateway usa Redis para sesiones y Qdrant para vectores. Usa Neo4j para el knowledge graph y Groq como LLM. Implementa un algoritmo de resumen. Ollama genera embeddings. Curl conecta con la API.",
+  "metadata": {"source": "readme"}
+}

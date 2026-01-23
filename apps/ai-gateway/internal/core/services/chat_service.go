@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -216,19 +217,30 @@ func (s *chatService) formatContext(docs []domain.VectorDocument) string {
 
 // retrieveGraphContext busca relaciones en Neo4j basándose en entidades mencionadas en el prompt
 func (s *chatService) retrieveGraphContext(ctx context.Context, query string) string {
-	// Estrategia: Buscar nodos cuyo ID aparezca en el prompt (case insensitive)
-	// y traer sus relaciones directas (1 salto)
+	// Tokenizar el query para buscar por palabras individuales
+	queryWords := tokenizeQuery(query)
+
+	// Estrategia mejorada:
+	// 1. Buscar por ID normalizado en el prompt
+	// 2. Buscar por nombre original
+	// 3. Buscar por keywords (cada palabra del query vs palabras del nodo)
 	cypherQuery := `
 		MATCH (n:Entity)
 		WHERE toLower($prompt) CONTAINS n.id
+		   OR toLower($prompt) CONTAINS toLower(n.name)
+		   OR ANY(w IN $words WHERE n.id CONTAINS w)
+		   OR ANY(w IN $words WHERE ANY(kw IN coalesce(n.keywords, []) WHERE kw CONTAINS w OR w CONTAINS kw))
 		OPTIONAL MATCH (n)-[r]->(m:Entity)
 		OPTIONAL MATCH (p:Entity)-[r2]->(n)
 		WITH n, collect(DISTINCT {source: n.name, rel: type(r), target: m.name}) AS outRels,
 		     collect(DISTINCT {source: p.name, rel: type(r2), target: n.name}) AS inRels
-		RETURN n.name AS entity, outRels, inRels
+		RETURN n.name AS entity, n.id AS entityId, outRels, inRels
 		LIMIT 5
 	`
-	params := map[string]interface{}{"prompt": strings.ToLower(query)}
+	params := map[string]interface{}{
+		"prompt": strings.ToLower(query),
+		"words":  queryWords,
+	}
 
 	results, err := s.graphRepo.ExecuteQuery(ctx, cypherQuery, params)
 	if err != nil {
@@ -237,9 +249,11 @@ func (s *chatService) retrieveGraphContext(ctx context.Context, query string) st
 	}
 
 	if len(results) == 0 {
-		log.Printf("RAG Graph: No se encontraron entidades para query: '%s'", query)
+		log.Printf("RAG Graph: No se encontraron entidades para query: '%s' (words: %v)", query, queryWords)
 		return ""
 	}
+
+	log.Printf("RAG Graph: Query tokenizado en palabras: %v", queryWords)
 
 	var sb strings.Builder
 	sb.WriteString("RELACIONES DEL GRAFO DE CONOCIMIENTO:\n")
@@ -286,6 +300,37 @@ func (s *chatService) retrieveGraphContext(ctx context.Context, query string) st
 	log.Printf("RAG Graph: Se encontraron %d relaciones para %d entidades.", relCount, len(results))
 	log.Printf("RAG Graph Context:\n%s", graphContext)
 	return graphContext
+}
+
+// tokenizeQuery extrae palabras significativas del query para búsqueda flexible
+func tokenizeQuery(query string) []string {
+	// Palabras de parada en español e inglés
+	stopWords := map[string]bool{
+		"el": true, "la": true, "los": true, "las": true, "un": true, "una": true,
+		"de": true, "del": true, "en": true, "con": true, "para": true, "por": true,
+		"que": true, "qué": true, "como": true, "cómo": true, "es": true, "son": true,
+		"se": true, "y": true, "o": true, "a": true, "al": true, "lo": true,
+		"the": true, "is": true, "are": true, "and": true, "or": true, "for": true,
+		"to": true, "in": true, "on": true, "of": true, "with": true, "how": true,
+		"what": true, "which": true, "this": true, "that": true, "it": true,
+		"usa": true, "usar": true, "hace": true, "tiene": true, "hay": true,
+	}
+
+	query = strings.ToLower(query)
+	// Extraer solo palabras alfanumericas
+	reg, _ := regexp.Compile("[^a-záéíóúñ0-9]+")
+	words := reg.Split(query, -1)
+
+	var result []string
+	seen := make(map[string]bool)
+	for _, w := range words {
+		// Filtrar palabras muy cortas, stopwords y duplicados
+		if len(w) >= 3 && !stopWords[w] && !seen[w] {
+			result = append(result, w)
+			seen[w] = true
+		}
+	}
+	return result
 }
 
 // selectProviders devuelve la lista de proveedores en orden de prioridad según preferencias y permisos

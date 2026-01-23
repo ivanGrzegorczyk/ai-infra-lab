@@ -224,16 +224,21 @@ DoneReading:
 			label = "CONCEPT"
 		}
 
+		// Generamos keywords: palabras individuales para búsqueda flexible
+		keywords := extractKeywords(n.ID)
+
 		// Usamos MERGE con label Entity y luego añadimos el label especifico
-		query := fmt.Sprintf("MERGE (n:Entity {id: $id}) SET n.name = $name SET n:%s", label)
+		// Guardamos: id (normalizado), name (original), keywords (para búsqueda flexible)
+		query := fmt.Sprintf("MERGE (n:Entity {id: $id}) SET n.name = $name, n.keywords = $keywords SET n:%s", label)
 		params := map[string]interface{}{
-			"id":   cleanID,
-			"name": n.ID,
+			"id":       cleanID,
+			"name":     n.ID,
+			"keywords": keywords,
 		}
 		if err := s.graphStore.ExecuteWrite(ctx, query, params); err != nil {
 			log.Printf("Error al escribir nodo %s: %v", n.ID, err)
 		} else {
-			log.Printf("  Nodo guardado: %s [id=%s] (%s)", n.ID, cleanID, label)
+			log.Printf("  Nodo guardado: %s [id=%s] (%s) keywords=%v", n.ID, cleanID, label, keywords)
 		}
 	}
 
@@ -319,4 +324,23 @@ func normalizeID(s string) string {
 	}
 	s = strings.Trim(s, "_")
 	return s
+}
+
+// extractKeywords genera una lista de palabras clave de un texto para búsqueda flexible
+func extractKeywords(s string) []string {
+	// Convertir a lowercase y extraer palabras alfanumericas
+	s = strings.ToLower(strings.TrimSpace(s))
+	reg, _ := regexp.Compile("[^a-z0-9]+")
+	words := reg.Split(s, -1)
+
+	// Filtrar palabras vacías y muy cortas (< 2 chars)
+	var keywords []string
+	seen := make(map[string]bool)
+	for _, w := range words {
+		if len(w) >= 2 && !seen[w] {
+			keywords = append(keywords, w)
+			seen[w] = true
+		}
+	}
+	return keywords
 }
