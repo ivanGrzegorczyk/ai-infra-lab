@@ -181,6 +181,8 @@ func (s *IngestService) extractAndSaveGraph(ctx context.Context, text string) (i
 		PreferredProvider: "groq", // Forzamos Groq si es posible por velocidad
 	}
 
+	log.Printf("  Llamando a LLM para extracción de grafo...")
+
 	// Usamos un canal para recibir la respuesta (tu interfaz es streaming)
 	resChan, errChan := s.extractorLLM.GenerateStream(ctx, req)
 
@@ -189,10 +191,12 @@ func (s *IngestService) extractAndSaveGraph(ctx context.Context, text string) (i
 		select {
 		case chunk, ok := <-resChan:
 			if !ok {
+				log.Printf("  Canal cerrado, respuesta completa")
 				goto DoneReading
 			}
 			fullResponse.WriteString(chunk.Content)
 		case err := <-errChan:
+			log.Printf("  Error del LLM: %v", err)
 			return 0, 0, err
 		case <-ctx.Done():
 			return 0, 0, ctx.Err()
