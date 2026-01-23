@@ -11,6 +11,7 @@ import (
 
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/observability"
 	"github.com/pkoukk/tiktoken-go"
 )
 
@@ -182,6 +183,8 @@ Si la respuesta no se encuentra en el contexto, di "No tengo información sobre 
 }
 
 func (s *chatService) retrieveContext(ctx context.Context, query string) ([]domain.VectorDocument, error) {
+	start := time.Now()
+
 	vector, err := s.embedder.GenerateEmbedding(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("error generando embedding: %w", err)
@@ -193,6 +196,9 @@ func (s *chatService) retrieveContext(ctx context.Context, query string) ([]doma
 		return nil, fmt.Errorf("error buscando en vector store: %w", err)
 	}
 
+	// Registrar métrica de duración
+	observability.RAGVectorSearchDuration.Observe(time.Since(start).Seconds())
+
 	var relevantDocs []domain.VectorDocument
 	for _, res := range results {
 		log.Printf("   -> RAG Match: Score %.4f", res.Score)
@@ -200,6 +206,10 @@ func (s *chatService) retrieveContext(ctx context.Context, query string) ([]doma
 			relevantDocs = append(relevantDocs, res.Document)
 		}
 	}
+
+	// Registrar métrica de documentos encontrados
+	observability.RAGDocumentsFound.Observe(float64(len(relevantDocs)))
+
 	return relevantDocs, nil
 }
 
@@ -217,6 +227,8 @@ func (s *chatService) formatContext(docs []domain.VectorDocument) string {
 
 // retrieveGraphContext busca relaciones en Neo4j basándose en entidades mencionadas en el prompt
 func (s *chatService) retrieveGraphContext(ctx context.Context, query string) string {
+	start := time.Now()
+
 	// Tokenizar el query para buscar por palabras individuales
 	queryWords := tokenizeQuery(query)
 
@@ -243,13 +255,19 @@ func (s *chatService) retrieveGraphContext(ctx context.Context, query string) st
 	}
 
 	results, err := s.graphRepo.ExecuteQuery(ctx, cypherQuery, params)
+
+	// Registrar métrica de duración
+	observability.RAGGraphSearchDuration.Observe(time.Since(start).Seconds())
+
 	if err != nil {
 		log.Printf("RAG Graph Error: %v", err)
+		observability.RAGRelationsFound.Observe(0)
 		return ""
 	}
 
 	if len(results) == 0 {
 		log.Printf("RAG Graph: No se encontraron entidades para query: '%s' (words: %v)", query, queryWords)
+		observability.RAGRelationsFound.Observe(0)
 		return ""
 	}
 
@@ -293,8 +311,12 @@ func (s *chatService) retrieveGraphContext(ctx context.Context, query string) st
 
 	if relCount == 0 {
 		log.Printf("RAG Graph: Entidades encontradas pero sin relaciones.")
+		observability.RAGRelationsFound.Observe(0)
 		return ""
 	}
+
+	// Registrar métrica de relaciones encontradas
+	observability.RAGRelationsFound.Observe(float64(relCount))
 
 	graphContext := sb.String()
 	log.Printf("RAG Graph: Se encontraron %d relaciones para %d entidades.", relCount, len(results))

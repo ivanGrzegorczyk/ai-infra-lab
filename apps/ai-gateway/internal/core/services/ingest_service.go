@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/domain"
 	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/core/ports"
+	"github.com/ivanGrzegorczyk/ai-infra-gateway/internal/observability"
 )
 
 const (
@@ -151,6 +152,11 @@ func (s *IngestService) processJob(ctx context.Context, job domain.IngestJob, co
 	job.Message = fmt.Sprintf("Completado: %d vectores, %d nodos, %d relaciones guardadas.", len(vectorsToUpsert), nodesCount, relsCount)
 	_ = s.jobRepo.SaveJob(ctx, job)
 	log.Printf("[Job %s] %s", job.ID, job.Message)
+
+	// Registrar métricas
+	observability.IngestJobsTotal.WithLabelValues("completed").Inc()
+	observability.GraphRAGNodesExtracted.Add(float64(nodesCount))
+	observability.GraphRAGRelationsExtracted.Add(float64(relsCount))
 }
 
 func (s *IngestService) failJob(ctx context.Context, job domain.IngestJob, msg string) {
@@ -158,6 +164,9 @@ func (s *IngestService) failJob(ctx context.Context, job domain.IngestJob, msg s
 	job.Status = domain.StatusFailed
 	job.Message = msg
 	_ = s.jobRepo.SaveJob(ctx, job)
+
+	// Registrar métrica de job fallido
+	observability.IngestJobsTotal.WithLabelValues("failed").Inc()
 }
 
 // --- LÓGICA DE EXTRACCIÓN Y GUARDADO DE GRAFO ---

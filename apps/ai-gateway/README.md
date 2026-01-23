@@ -361,6 +361,7 @@ Para proteger la infraestructura de errores de los modelos (alucinaciones o bucl
 
 El servicio expone métricas en formato Prometheus en `/metrics`.
 
+### Métricas Generales
 | Métrica | Tipo | Descripción |
 | :--- | :--- | :--- |
 | `ai_gateway_tokens_total` | Counter | Total de tokens generados (labels: `user`, `provider`). |
@@ -368,6 +369,17 @@ El servicio expone métricas en formato Prometheus en `/metrics`.
 | `ai_gateway_http_requests_total` | Counter | Total de requests HTTP (labels: `status`, `user`, `provider`). |
 | `ai_gateway_groq_remaining_tokens` | Gauge | Cuota de tokens restante en la API de Groq. |
 | `ai_gateway_tokens_per_request` | Histogram | Distribución del tamaño de las respuestas. |
+
+### Métricas de RAG y GraphRAG
+| Métrica | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `ai_gateway_rag_vector_search_seconds` | Histogram | Tiempo de búsqueda vectorial en Qdrant. |
+| `ai_gateway_rag_graph_search_seconds` | Histogram | Tiempo de búsqueda de relaciones en Neo4j. |
+| `ai_gateway_rag_documents_found` | Histogram | Documentos relevantes encontrados por búsqueda vectorial. |
+| `ai_gateway_rag_relations_found` | Histogram | Relaciones encontradas por búsqueda en grafo. |
+| `ai_gateway_ingest_jobs_total` | Counter | Total de jobs de ingesta (labels: `status`). |
+| `ai_gateway_graphrag_nodes_extracted_total` | Counter | Total de nodos extraídos por GraphRAG. |
+| `ai_gateway_graphrag_relations_extracted_total` | Counter | Total de relaciones extraídas por GraphRAG. |
 
 ---
 
