@@ -400,5 +400,5 @@ go run cmd/gateway/main.go
 
 ### Construcción de Imagen
 ```bash
-docker build -t ivangrz/ai-gateway:v1.0.0 .
+docker build -t ivangrz/ai-gateway:latest .
 ```

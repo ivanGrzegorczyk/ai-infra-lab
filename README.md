@@ -28,7 +28,8 @@ graph TD
         Gateway -->|Route Cloud| Groq[⚡ Groq Cloud API]
         
         Gateway <-->|Session Storage| Redis[(🔴 Redis)]
-        Gateway <-->|RAG: Ingest & Search| Qdrant[(🔍 Qdrant Vector DB)]
+        Gateway <-->|Vector RAG| Qdrant[(🔍 Qdrant Vector DB)]
+        Gateway <-->|Graph RAG| Neo4j[(🕸 Neo4j Graph DB)]
         
         Ollama -->|Generate Embeddings| Gateway
         
@@ -46,7 +47,9 @@ graph TD
 El núcleo inteligente del sistema. Un API Gateway desarrollado en Go siguiendo arquitectura hexagonal.
 * **Smart Routing:** Decide dinámicamente si usar Ollama (local) o Groq (cloud).
 * **Memory Management:** Mantiene el contexto de las conversaciones usando Redis.
-* **RAG (Retrieval-Augmented Generation):** Ingesta de documentos con vectorización automática y búsqueda semántica usando Qdrant.
+* **Hybrid RAG (Retrieval-Augmented Generation):**
+  * **Vector RAG:** Ingesta de documentos con vectorización automática (nomic-embed-text) y búsqueda semántica en Qdrant.
+  * **GraphRAG:** Extracción automática de entidades y relaciones usando LLM, almacenadas en Neo4j para búsqueda estructurada por keywords.
 * **Safety & Resilience:** Implementa *Circuit Breakers*, *Safety Breaks* y *Summarization* automática de contexto.
 
 #### 2. [🦙 Ollama Service](services/ollama/)
@@ -69,8 +72,9 @@ Definición declarativa de la infraestructura en OCI. Gestiona VCNs, Subnets, Se
 | **Orquestación** | K3s (Kubernetes) | Gestión de contenedores liviana. |
 | **Backend** | Go (Golang) | Lógica de negocio de alto rendimiento. |
 | **Inferencia** | Ollama / Groq | Motores de LLM Local y Cloud. |
-| **Vector Store** | Qdrant | Base de datos vectorial para RAG. |
-| **Base de Datos** | Redis | Almacenamiento de sesiones y jobs. |
+| **Vector Store** | Qdrant | Base de datos vectorial para RAG semántico. |
+| **Graph Store** | Neo4j | Base de datos de grafos para GraphRAG. |
+| **Session Store** | Redis | Almacenamiento de sesiones y jobs. |
 | **Observabilidad** | Prometheus / Grafana | Métricas de negocio y sistema. |
 | **Ingress** | Nginx / Cert-Manager | Gestión de tráfico y SSL automático (Let's Encrypt). |
 
@@ -85,8 +89,9 @@ Definición declarativa de la infraestructura en OCI. Gestiona VCNs, Subnets, Se
 │   └── playground/    # Frontend estático para pruebas de chat
 ├── k8s/
 │   ├── services/
+│   │   ├── neo4j/     # Base de datos de grafos para GraphRAG
 │   │   ├── ollama/    # Manifiestos K8s para el motor de inferencia local
-│   │   ├── qdrant/    # Base de datos vectorial para RAG
+│   │   ├── qdrant/    # Base de datos vectorial para RAG semántico
 │   │   └── redis/     # Cache y almacenamiento de sesiones
 │   └── ...            # Namespaces, Ingress, Certs
 ├── terraform/         # Scripts de infraestructura OCI
